@@ -22,6 +22,91 @@ class BoardDiff then ->
 
   @bump-order = {} # thread-no => [old idx, new idx]
 
+# 4chan-API-canonical named classes, so debugging and memory profiling
+# is easier.
+
+class Post
+  ({@no, @resto, @now, @time, @tim, @id, @name, @trip, @email, @sub, @com, \
+    @capcode, @country, @country_name, @filename, @ext, @fsize, @md5, @w, @h, \
+    @tn_w, @tn_h, @filedeleted, @spoiler}) ~>
+
+  equals: (other) ->
+    for k, v of this
+      if other[k] is not v
+        return false
+    return true
+
+# Combination of catalog thread format plus thread API ({posts}, with op first)
+class Thread
+  ({@no, @time, @bumplimit, @imagelimit, @sticky, @closed, @replies, @images},
+    posts) ->
+      @posts = posts.map Post
+
+  @from-catalog = (catalog-thread, order) ->
+    new Thread do
+      catalog-thread
+      # 4chan's thread object has all the OP information on it.
+      [catalog-thread] ++ (catalog-thread.last_replies || [])
+
+  @from-api-thread = (api-thread, order) ->
+    op = api-thread.posts.0
+    new Thread do
+      # individual thread is {posts: [op, ...]}, but confusingly the op has
+      # all the usual thread-related data on it e.g. reply count.
+      op
+      api-thread.posts
+
+# [Post], [Post] -> {added, changed, deleted}
+diff-posts = (old-posts, new-posts) ->
+  added = []; changed = []; deleted = [];
+
+  old-posts-by-id = {}
+  for old-posts
+    old-posts-by-id[..no] = ..
+
+  for post in new-posts
+    if old-posts-by-id[post.no]?
+      unless that.equals post
+        changed.push post
+      delete old-posts-by-id[post.no]
+    else
+      added.push post
+
+  for n, post of old-posts-by-id
+    deleted.push post
+
+  return {added, changed, deleted}
+
+most-wanted-thread = (board) ->
+  most = void
+  most-missing = -Infinity
+  for thread-no of board.stale
+    thread = board.threads[thread-no]
+    continue unless thread?
+    missing = thread.replies - thread.posts.length + 1
+    if missing > most-missing
+      most = thread
+      most-missing = missing
+
+  most
+
+debug-thread = (new-thread, old-thread, board-diff) ->
+  diff = new-thread.replies - old-thread.replies
+  if diff > 0 and board-diff.new-posts.length is not diff
+    console.error "expecting #diff more replies, got \
+                   #{board-diff.new-posts.length}".yellow.bold
+  if diff < 0 and board-diff.deleted-posts.length is not -diff
+    console.error "expecting -#diff less replies, got \
+                    #{board-diff.deleted-posts.length}".yellow.bold
+
+  if board-diff.new-posts.length is 0 and board-diff.changed-posts.length is 0
+  and board-diff.deleted-posts.length is 0
+    console.error """
+      Wasted thread poll!
+      length diff: prev #{prev.posts.length} cur #{thread.posts.length}
+      replies diff: prev #{prev.replies} cur #{thread-data.replies}
+      """.yellow.bold
+
 # 4chan replicator through the JSON API
 #
 # @requests, @responses, and @ready attachment buses are suitable for use with
@@ -44,11 +129,8 @@ module.exports = class Yotsuba
     # initial board state
     init ? {
       diff: new BoardDiff
-      threads: {} # thread-no:
-        # bump-order: catalog order, respecting sage
-        # last-modified: Date, determined from last post
-        # posts: [], 4chan API format, i.e. array with OP first
-        # index: {post-no => post index}
+      threads: {} # thread-no: thread
+      bump-order: [] # thread-no, in bump order
       last-modified: new Date
       stale: {} # set of thread-no, to mark threads that need to be polled
     }
@@ -100,9 +182,10 @@ module.exports = class Yotsuba
         @threads = {}
 
         order = 0
+        # for each page's threads [{threads: []}, ...]
         for {threads} in catalog then for thread in threads
           thread-no = thread.no
-          
+
           last5 = thread.last_replies
           new-posts = []
 
@@ -131,7 +214,7 @@ module.exports = class Yotsuba
                     console.log "expected new: #{expected-new-posts.map (.no)}"
                     console.log "prev last 5: #{prev.posts.slice -5 .map (.no)}"
                     console.log "prev alleged replies: #{prev.replies}"
-                    console.log "prev actul replies: #{prev.posts.length - 1}"
+                    console.log "prev actual replies: #{prev.posts.length - 1}"
                     console.log "curr replies: #{thread.replies}"
 
                     @stale[thread-no] = true
@@ -152,7 +235,8 @@ module.exports = class Yotsuba
                 expected-images-diff = thread.images - prev.images
 
                 if new-posts-with-images is not expected-images-diff
-                  console.log "#thread-no images got deleted expected: #{expected-images-diff} \
+                  console.log "#thread-no images got deleted expected: \
+                                #{expected-images-diff} \
                                 got: #{new-posts-with-images}".red
                   # some images got deleted
                   @stale[thread-no] = true
@@ -160,7 +244,9 @@ module.exports = class Yotsuba
             else if reply-count-diff < 0
               # some replies got deleted
               # so just wait till we poll the thread to pick up the changes
-              console.log "#thread-no replies got deleted diff: #{thread.replies} - #{prev.replies} = #{reply-count-diff}".red
+              console.log "#thread-no replies got deleted diff: \
+                          #{thread.replies} - #{prev.replies} = \
+                          #{reply-count-diff}".red
               @stale[thread-no] = true
 
             # set new thread
@@ -177,19 +263,7 @@ module.exports = class Yotsuba
               }
           else
             # new thread
-            op = thread{
-              \no, resto, now, time, tim,
-              id, name, trip, email, sub, com, capcode, country, country_name,
-              filename, ext, fsize, md5, w, h, tn_w, tn_h, filedeleted, spoiler
-            }
-            new-thread = {}
-              ..posts = [op] ++ (thread.last_replies || [])
-              ..order = order++
-              .. <<< thread{
-                \no, time,
-                bumplimit, imagelimit, sticky, closed
-                custom_spoiler, replies, images
-              }
+            new-thread = Thread.from-catalog thread
               @threads[thread-no] = ..
 
               @diff.new-posts.push .....posts
@@ -204,60 +278,18 @@ module.exports = class Yotsuba
           delete @stale[thread-no]
 
       [@thread-responses] updater ({body: thread}) !->
-        thread-data = thread.posts.0
-        op = thread.posts.0.{
-          \no, resto, now, time, tim,
-          id, name, trip, email, sub, com, capcode, country, country_name,
-          filename, ext, fsize, md5, w, h, tn_w, tn_h, filedeleted, spoiler
-        }
-        thread-no = op.no
+        new-thread = Thread.from-api-thread thread
+        old-thread = @threads[thread-no]
 
-        # this should always exist since we only know about threads from the
-        # catalog, thus at least the OP should be here
-        prev = @threads[thread-no]
-
-        prev-post-idx = {}
-        for post in prev.posts
-          prev-post-idx[post.no] = post
-
-        # calculate differences
-        cur-post-idx = {}
-        for post, i in thread.posts
-          cur-post-idx[post.no] = post
-          if prev-post-idx[post.no]?
-            if that.filedeleted is not post.filedeleted \
-               or that.com is not post.com
-              @diff.changed-posts.push post
-          else
-            @diff.new-posts.push post
-
-        for post in prev.posts
-          if not cur-post-idx[post.no]?
-            @diff.deleted-posts.push post
-
-        diff = thread-data.replies - prev.replies
-        if diff > 0 and @diff.new-posts.length is not diff
-          console.error "expecting #{diff} more replies, got #{@diff.new-posts.length}".yellow.bold
-        if diff < 0 and @diff.deleted-posts.length is not -diff
-          console.error "expecting #{-diff} less replies, got #{@diff.deleted-posts.length}".yellow.bold
-
-        # update thread
-        prev
-          ..posts = [op] ++ thread.posts.slice 1
-          if (..posts.length - 1) is not thread-data.replies
-            console.error "has #{..posts.length}, expecting #{thread-data.replies}!".red.bold
-          .. <<< thread-data{
-            bumplimit, imagelimit, replies, images, sticky, closed
-          }
-
+        post-diff = diff-posts @threads[thread-no], new-thread
+        @diff.changed-posts = post-diff.changed
+        @diff.new-posts = post-diff.added
+        @diff.deleted-posts = post-diff.deleted
+        
         # no longer stale
         delete @stale[thread-no]
 
-        if @diff.new-posts.length is 0 and @diff.changed-posts.length is 0 \
-           and @diff.deleted-posts.length is 0
-          console.error "Wasted thread poll!".yellow.bold
-          console.error "length diff: prev #{prev.posts.length} cur #{thread.posts.length}".yellow.bold
-          console.error "replies diff: prev #{prev.replies} cur #{thread-data.replies}".yellow.bold
+        debug-thread new-thread, old-thread, @diff
 
       [@thread-responses-not-found] updater (res) !->
         {thread-no} = res.req
@@ -267,19 +299,6 @@ module.exports = class Yotsuba
       [@responses-not-modified] updater -> # nothing, just update times
 
     @changes = @board.changes!
-
-    most-wanted-thread = (board) ->
-      most = void
-      most-missing = -Infinity
-      for thread-no of board.stale
-        thread = board.threads[thread-no]
-        continue unless thread?
-        missing = thread.replies - thread.posts.length + 1
-        if missing > most-missing
-          most = thread
-          most-missing = missing
-
-      most
 
     # Stream Request
     # This Stream should be plugged into a receiver such as the Limiter in order
