@@ -5,17 +5,16 @@ require! {
   Yotsuba: \./yotsuba
   fs
   colors
-  jsdom
   _: \prelude-ls
-  req: \request
+  #req: \request
+  agent: \webkit-devtools-agent
 }
 
-document = jsdom.jsdom(null, null, {fetchExternalResources: false})
-
 text-content = ->
-  div = document.create-element \div
-    ..innerHTML = (it || '')replace /<br>/g '\n'
-  return div.textContent
+  return '' if not it?
+  it.replace /<br>/g '\n' .replace /<[^>]+?>/g ''
+    .replace /&gt;/g '>' .replace /&quot;/g '"'
+    .replace /&#039;/g \'
 
 y = new Yotsuba do
   \a
@@ -28,29 +27,38 @@ if init?
   for n, thread of init.threads
     posts.push ...thread.posts
 
-  ops = []
-  for posts
-    ops.push JSON.stringify {
-      index:
-        _index: "yotsuba"
-        _timestamp: ..time * 1000
-        _type: \post
-        _id: ..no
-        _parent: if ..resto is not 0 then that
-    }
-    ops.push JSON.stringify ..
+  #ops = []
+  #for posts
+    #ops.push JSON.stringify {
+      #index:
+        #_index: "yotsuba"
+        #_timestamp: ..time * 1000
+        #_type: \post
+        #_id: ..no
+        #_parent: if ..resto is not 0 then that
+    #}
+    #ops.push JSON.stringify ..
 
-  req.put do
-    url: "http://localhost:9200/yotsuba/_bulk"
-    body: ops.join \\n
-    (err, res, body) ->
-      throw err if err
+  #req.put do
+    #url: "http://localhost:9200/yotsuba/_bulk"
+    #body: ops.join \\n
+    #(err, res, body) ->
+      #throw err if err
+      #
 
 l = new Limiter 1000ms request.get, (.status-code >= 500)
 
-y.responses.plug l.responses
-l.requests.plug y.requests
-y.ready.plug l.ready
+#y.responses.plug l.responses
+l.responses.on-value (res) !->
+  set-timeout (!-> y.responses.push res), 0
+
+#l.requests.plug y.requests
+y.requests.on-value (req) !->
+  set-timeout (!-> l.requests.push req), 0
+
+#y.ready.plug l.ready
+l.ready.on-value (ready) !->
+  set-timeout (!-> y.ready.push ready), 0
 
 l.requests.on-value !-> console.log "requesting #{it.path}".green
 l.responses.filter (.status-code is not 200)
@@ -92,15 +100,15 @@ y.board.on-value !({diff}: board) ->
       console.log "----------------".grey
       console.log text-content it.com
 
-y.board.changes!on-value !({diff}) ->
-  for it in diff.new-posts
-    req.put do
-      url: "http://localhost:9200/yotsuba/post/#{it.no}
-            ?_parent=#{it.resto}&_timestamp=#{it.time * 1000}"
-      json: it
-      (err, res, body) ->
-        console.log err if err
-        console.log body if not (200 <= res.status-code <= 300)
+#y.board.changes!on-value !({diff}) ->
+  #for it in diff.new-posts
+    #req.put do
+      #url: "http://localhost:9200/yotsuba/post/#{it.no}
+            #?_parent=#{it.resto}&_timestamp=#{it.time * 1000}"
+      #json: it
+      #(err, res, body) ->
+        #console.log err if err
+        #console.log body if not (200 <= res.status-code <= 300)
 
 l.ready.push true
 

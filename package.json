@@ -5,8 +5,8 @@
   "dependencies": {
     "express": "3.3.8",
     "request": "2.27.0",
-    "jsdom": "0.8.4",
-    "baconjs": "0.6.14",
+    "jsdom": "0.8.11",
+    "baconjs": "0.7.2",
     "colors": "0.6.2"
   }
 }

@@ -22,31 +22,41 @@ function decode-content res
   else
     res
 
-function slurp node-stream
+function slurp node-stream, cb
   node-stream.set-encoding \utf-8 # decode bytes as string
 
-  events node-stream, \data
-    .take-until events node-stream, \end
-    .reduce "" (+)
+  # i.e. events node-stream, \data .take-until \end .reduce (+)
+  # Unfortunately, bacon.js has some memory leak problems, so
+  # we use a simpler more-canonical buffer, joined on end
+  buffer = []
+  node-stream.on \data !-> buffer.push it
+  node-stream.on \end !->
+    cb buffer.join ''
 
 export
   get = (req) ->
     req.{}headers <<< options.headers
     req <<< options{host}
 
-    r = https.get req
+    Bacon.from-node-callback (cb) !->
+      r = https.get req
+      r.on \error !->
+        cb it
+      r.on \response (res) !->
+        data <- slurp decode-content res
 
-    Bacon.merge-all do
-      once r, \error -> new Bacon.Error it
-      once r, \response .flat-map (res) ->
-        Bacon.combine-template {
-          body: slurp decode-content res .map ->
-            try
-              JSON.parse it
-            catch
-              console.log "parse error" it
-              new Bacon.Error it
-          req
-          res.status-code
-          res.headers
-        }
+        try
+          body = JSON.parse data
+        catch
+          cb e
+          return
+
+        if body?
+          cb null, {
+            body
+            req
+            res.status-code
+            res.headers
+          }
+        else
+          cb new Error 'null body?'
