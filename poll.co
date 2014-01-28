@@ -1,0 +1,216 @@
+# poll subsystem
+#
+# Spec:
+#   - hit 4chan API at most every 1000ms (rate limit)
+#   - service request queues without starvation using round robin
+#   - two request queues:
+#     1. catalog requests: FIFO, across all boards
+#     2. thread requests: priority by number of posts to be fetched, also
+#        weighted by liveliness (board position/last update), to avoid fetching
+#        threads about to be pruned.
+
+Bacon = require \baconjs
+make-request = require \./request
+
+# boards: [String] = list of boards to poll
+# init: {} = current state, to seed which threads to poll
+module.exports = class Poll then (init) ->
+
+  @catalog-requests = new Bacon.Bus
+
+  @responses = new Bacon.Bus
+
+  @state = @responses.scan init, (state, update) -> with state
+    board-name = update.req.board-name
+    board = state@[board-name]
+
+    {inserts, deletes} = &diff =
+      inserts: []
+      deletes: [] # TODO detect pruning/deletion
+
+    if update.req.type is \catalog
+      current-threads = {}
+      pos = 0
+      for {threads, page} of update.body
+        for thread, i of threads
+          current-threads[thread.no] = thread # for delete detection
+
+          if (last = board[thread.no])?
+            # update
+            diff = thread.replies - last.replies
+
+            new-posts = if diff > 0 then thread.last_replies.slice -diff else []
+            inserts.push ...new-posts
+
+            # TODO post deletions
+            board[thread.no]
+              &@@last_replies.push ...new-posts
+
+              # TODO bad mutation
+              &page = page
+              &page-position = i
+              &position = pos++
+
+            # TODO also bad :(
+            thread.missing = thread.replies - (thread.last_replies?length or 0)
+          else
+            # insert
+            board[thread.no] = thread
+              # TODO bad mutation
+              &page = page
+              &page-position = i
+              &position = pos++
+              &board = board-name
+
+            inserts.push thread
+            inserts.push ...thread.last_replies
+
+            thread.missing = thread.replies - (thread.last_replies?length or 0)
+
+      for no, thread in board
+        if not current-threads[no]?
+          # delete
+          deletes.push thread
+          deletes.push ...thread.last_replies
+          delete board[no]
+    else # thread
+      thread = update.body
+      thread-no = update.req.thread-no
+      if update.status-code is 404
+        # delete
+        deletes.push ...board[thread-no].last_replies
+        delete board[thread-no]
+      else
+        # update
+        console.log "updating thread #{thread-no}"
+
+        op = thread.posts.0
+
+        old = board[thread-no]
+        old-posts = {}
+        old-posts[thread-no] = true
+        for old.last_replies
+          old-posts[&no] = true
+
+        for thread.posts
+          unless old-posts[&no]
+            inserts.push &
+
+        board[thread-no] = op <<<
+          last_replies: thread.posts.slice 1
+          # TODO dunno board position at this point
+          # should be
+          missing: 0
+
+  @most-wanted-thread = @state.map ->
+    most = void
+    for name, board in it
+      for no, thread in board
+        # TODO page
+        if thread.missing > (most?missing or 0)
+          most = thread
+    most
+
+  @mwt-request = @most-wanted-thread.map ->
+    # TODO If Modified Since and shit
+    if it?
+      req \thread, it.board, "https://api.4chan.org/#{it.board}/res/#{it.no}.json", it.no
+    else
+      void
+
+  # in order to hack Bacon.when to do what we want, we implement
+  # a custom Source type with the following semantics:
+  #
+  # - While the Property is a null/undefined value, any patterns including the
+  #   Property will not match
+  # - While the Property has a defined and non-null value, any patterns including
+  #   the Property will match and include the property value as usual.
+  #
+  # This allows us to "use up" a ready-from-* event iff there is either a
+  # waiting catalog or a thread that is most-wanted.
+  #
+  # If both the catalog requests and thread requests were reguar FIFO queues,
+  # this would not be necessary, and the regular Bacon.when behavior would
+  # suffice.
+  #
+  # However, since the thread requests are just the head of a priority queue,
+  # the only distinction we want to make is if there is a currently wanted
+  # thread or not. If we used the regular behavior with a property in the
+  # pattern match, then we'd accidentally "use up" the ready-from-* event
+  # even if the the most-wanted-thread was currently undefined, thus stalling
+  # the pipeline.  We could do some hack with a feedback loop to "re-feed"
+  # the when observable, but I think this way is better.
+  @mwt-request-s = new Bacon.Source @mwt-request, true, false
+    # override to correctly turn [undefined] -> []
+    &consume = -> @val
+    &push = -> @val = it!
+    &has-at-least = -> @val?
+
+  first = -> it
+
+  @ready-from-catalog = new Bacon.Bus
+  @ready-from-thread = new Bacon.Bus
+
+  # multiplexed, round-robin queued, rate-limited
+  @requests = Bacon.when do
+    # if we just did a catalog, prefer threads
+    [@mwt-request-s   , @ready-from-catalog] first
+    [@catalog-requests, @ready-from-catalog] first
+
+    # if we just did a thread, prefer a catalog
+    [@catalog-requests, @ready-from-thread ] first
+    [@mwt-request-s   , @ready-from-thread ] first
+
+    # in either case, if we didn't have our first choice, go ahead and do the other
+    # or wait for either a catalog request or a thread request.
+
+  # non-pure requests -> responses map
+  @responses.plug do-requests @requests
+
+  # de-multiplex
+  @catalog-responses = @responses.filter -> it.req.type is \catalog
+  @thread-responses = @responses.filter -> it.req.type is \thread
+
+  # cooldown on 4chan's rate limit
+  @ready-from-catalog.plug @catalog-responses.delay 3000ms
+  @ready-from-thread.plug @thread-responses.delay 3000ms
+
+  # TODO dynamic polling
+  # for now poll every 5s
+
+  @catalog-requests.plug do
+    @catalog-responses.delay 5000ms .map -> it.req
+
+  @start = ->
+    @ready-from-thread.push true
+
+poll = new Poll {}
+
+poll.catalog-requests.map (-> it.board-name) .log 'Pending catalog-request: '
+poll.requests.map (-> it.url) .log 'Request: '
+poll.responses.map (-> it.req.url + " " + it.status-code) .log 'Response: '
+poll.ready-from-catalog.on-value !-> console.log 'ready from catalog'
+poll.ready-from-thread.on-value !-> console.log 'ready from thread'
+
+poll.most-wanted-thread.on-value !-> console.log "most wanted #{it?no} : #{it?missing}"
+
+poll.state.map (-> it.diff?inserts or [])
+  .on-value -> console.log "#{it.length} new replies"
+
+poll.state.map (-> it.diff?deletes or [])
+  .on-value -> console.log "#{it.length} deletes"
+
+poll.state.on-value ->
+  total = 0; missing = 0; threads = 0
+  for name, board in it
+    for no, thread in board
+      threads++
+      total += thread.replies || 0
+      missing += thread.missing || 0
+  console.log "#threads threads, #total posts, #missing missing"
+
+# initial poll
+for board of <[a]>
+  poll.catalog-requests.push req \catalog, board, "https://api.4chan.org/#board/catalog.json"
+
+poll.start!

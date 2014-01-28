@@ -1,0 +1,112 @@
+Bacon = require \baconjs
+request = require \request
+express = require \express
+
+# poll catalog -> near-complete view of a board
+# from board and memory -> unfetched posts (total - in mem)
+# while not polling catalog, fetch thread with most missing posts -> update mem, missing
+# poll catalog -> also update mem/missing
+# poll catalog -> from diff of prev, calc new/deleted posts -> update mem, stream
+
+# polling: hit 4chan at most every second
+# also let poll catalog skip ahead of post fetching
+# e.g. poll every 3 seconds, in interim 2 seconds, fetch 2 threads
+# eventually, missing posts will go to zero reducing load to only new posts
+
+threads-poll = new Bacon.EventStream (subscriber) ->
+  opts =
+    url: \http://api.4chan.org/b/catalog.json
+    json: true
+
+  running = true
+  var r
+
+  poll = !->
+    r := request opts, !(err, res, body) ->
+      ret = if err
+        subscriber new Bacon.Error body
+      else
+        console.log "..."
+        subscriber new Bacon.Next {body, date: Date.now! / 1000}
+
+      running := ret is not Bacon.noMore
+
+      setTimeout poll, 3000ms if running
+
+  poll!
+
+  return !->
+    console.log \unsub!
+    running := false
+    r?abort!
+
+windowed = threads-poll
+  .map ->
+    threads = Array::concat.apply [], it.body.map -> it.threads
+    t = {}
+    for threads => t[&no] = &
+    it <<< body: t
+  .sliding-window 2, 2
+
+inserts = windowed.flat-map ([last, current]) -> Bacon.fromArray do
+  for no, thread in current.body
+    thread if last.body[no]!?
+
+updates = windowed.flat-map ([last, current]) -> Bacon.fromArray do
+  for no, thread in current.body
+    if last.body[no] and thread.replies is not last.body[no]replies
+      [last.body[no], thread]
+
+deletes = windowed.flat-map ([last, current]) -> Bacon.fromArray do
+  for no, thread in last.body
+    thread if current.body[no]!?
+
+posts = Bacon.merge-all do
+  inserts
+  updates.flat-map ([last, current]) ->
+    num = current.replies - last.replies
+    if num > 0
+      Bacon.fromArray current.last_replies.slice -num
+    else
+      Bacon.never!
+
+{jsdom} = require \jsdom
+
+document = jsdom(null, null, {fetchExternalResources: false})
+
+text-content = ->
+  div = document.create-element \div
+    &innerHTML = (it || '')replace /<br>/g '\n'
+  return div.textContent
+
+posts.on-value !->
+  console.log "#{if it.bumplimit? then "OP" else ''}#{it.name} #{it.now}\n=====================\n#{text-content it.com}\n================"
+
+deletes.on-value !->
+  console.log "Thread #{it.no} deleted..."
+
+server = express!
+  &use \/static express.static __dirname
+  &get \/events !(req, res) ->
+    console.log \connection!
+    req.set-timeout Infinity
+
+    res.write-head 200,
+      'Content-Type': 'text/event-stream'
+      'Cache-Control': 'no-cache'
+      'Connection': 'keep-alive'
+
+    res.write "\
+      :hello!\n\n
+    "
+
+    unsub = updated-threads.on-value !->
+      console.log "sending #it"
+      res.write "\
+        id: #{Date.now!}\n
+        data: #{JSON.stringify it}\n\n
+      "
+
+    res.on \close unsub
+
+server.listen 3000
