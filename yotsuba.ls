@@ -3,24 +3,37 @@ require! {
   _: \prelude-ls
 }
 
-# diff is calculated along with state because it's more efficient
-# than a second pass. XXX I wish Bacon.js had some better abstraction
-# for this sort of "update, but calculate diff too" pattern
-class BoardDiff then ->
-  @new-threads = []
-  @new-posts = [] # includes new thread OPs
-  @deleted-threads = []
+# The implementations for reconciling changes from catalog/thread fetches
+# are factored to be more easily correct at the expense of garbage collection
+# and computation. Future refactorings can focus on efficiency once
+# correctness is unit-tested.
 
-  # because the catalog page doesn't show a last-modified date for
-  # a given thread, deleted/changed posts is best-effort, e.g.
-  # if the same number of images get added and deleted within a poll,
-  # the total number of images will look the same and thus
-  # the thread state won't look stale to us. Posts with changed comments
-  # won't change _any_ observable properties, so these will usually be missed.
-  @deleted-posts = [] # does not include posts from deleted therads
-  @changed-posts = [] # e.g. deleted image, BANNED FOR THIS POST
+class Diff
+  (
+    @new-threads
+    @deleted-threads
+    # e.g. sticky/locked. If thread merely has reply differences, it's not
+    # counted as 'changed'.
+    @changed-posts
 
-  @bump-order = {} # thread-no => [old idx, new idx]
+    @new-posts # includes new thread OPs
+    # because the catalog page doesn't show a last-modified date for
+    # a given thread, deleted/changed posts is best-effort, e.g.
+    # if the same number of images get added and deleted within a poll,
+    # the total number of images will look the same and thus
+    # the thread state won't look stale to us. Posts with changed comments
+    # won't change _any_ observable properties, so these will usually be missed.
+    @deleted-posts # does not include posts from deleted therads
+    @changed-posts # e.g. deleted image, BANNED FOR THIS POST
+  ) ->
+
+  append: (other) !->
+    @new-threads     .push ...other.new-threads
+    @deleted-threads .push ...other.deleted-threads
+    @changed-threads .push ...other.changed-threads
+    @new-posts       .push ...other.new-posts
+    @deleted-posts   .push ...other.deleted-posts
+    @changed-posts   .push ...other.changed-posts
 
 # 4chan-API-canonical named classes, so debugging and memory profiling
 # is easier.
@@ -42,6 +55,17 @@ class Thread
     posts) ->
       @posts = posts.map Post
 
+  stub-equal: (stub) ->
+    for k, v of this when k is not \posts
+      if other[k] is not v
+        return false
+
+    for post, i in @posts[0 til -5]
+      if not post.equals stub.last_replies[i]
+        return false
+
+    return true
+
   @from-catalog = (catalog-thread, order) ->
     new Thread do
       catalog-thread
@@ -56,26 +80,28 @@ class Thread
       op
       api-thread.posts
 
-# [Post], [Post] -> {added, changed, deleted}
-diff-posts = (old-posts, new-posts) ->
+# [Post], [Post] -> Diff
+diff-posts = (old, nu) ->
   added = []; changed = []; deleted = [];
 
-  old-posts-by-id = {}
-  for old-posts
-    old-posts-by-id[..no] = ..
+  old-by-id = {}
+  for old
+    old-by-id[..no] = ..
 
-  for post in new-posts
-    if old-posts-by-id[post.no]?
+  for post in nu
+    if old-by-id[post.no]?
       unless that.equals post
         changed.push post
-      delete old-posts-by-id[post.no]
+      delete old-by-id[post.no]
     else
       added.push post
 
-  for n, post of old-posts-by-id
+  for n, post of old-by-id
     deleted.push post
 
-  return {added, changed, deleted}
+  return new Diff do
+    [] [] [] # thread differences
+    added, deleted, changed
 
 most-wanted-thread = (board) ->
   most = void
@@ -88,10 +114,10 @@ most-wanted-thread = (board) ->
       most = thread
       most-missing = missing
 
-  most
+  return most
 
-debug-thread = (new-thread, old-thread, board-diff) ->
-  diff = new-thread.replies - old-thread.replies
+debug-thread = (nu, old, board-diff) ->
+  diff = nu.replies - old.replies
   if diff > 0 and board-diff.new-posts.length is not diff
     console.error "expecting #diff more replies, got \
                    #{board-diff.new-posts.length}".yellow.bold
@@ -106,6 +132,131 @@ debug-thread = (new-thread, old-thread, board-diff) ->
       length diff: prev #{prev.posts.length} cur #{thread.posts.length}
       replies diff: prev #{prev.replies} cur #{thread-data.replies}
       """.yellow.bold
+
+# TODO this compare enum can probably be refactored into
+# reconcilable: boolean, since UNCHANGED is stub-equal essentially,
+# and ATTRIBUTE_CHANGES has to be detected in diff-threads anyway.
+Compare =
+  UNCHANGED              : 0
+  # e.g. sticky -> unsticky. Implies that `replies` and `images` haven't changed,
+  # since that's covered by RECONCILABLE_POSTS.
+  ATTRIBUTE_CHANGES      : 1
+  # old.reples[0...-5] ++ nu.last_replies reflects the actual state
+  # of the thread according to the thread attributes. If reconcilable, then
+  # we can update the thread by doing the concatenation, otherwise we have
+  # to re-fetch the thread page. Most changes should fall into this category.
+  # Since this means that `replies` and `images` have changed, this implies
+  # NEW_ATTRIBUTES.
+  RECONCILABLE_POSTS     : 2
+  # A thread pull is required to merge all changes, e.g. deletions earlier in
+  # the thread
+  UNRECONCILABLE_CHANGES : 3
+
+# CatalogThread, Thread -> Compare
+compare = (stub, old) ->
+  if old-replies.stub-equal stub
+    Compare.UNCHANGED
+  else if stub.replies is old.replies
+  and stub.images is old.images
+    Compare.NEW_ATTRIBUTES
+  else if 0 <= (stub.replies - old.replies) <= 5
+  and     0 <= (stub.images  - old.images)  <= 5
+  and     aligned stub, old
+    Compare.RECONCILABLE_POSTS
+  else
+    Compare.UNRECONCILABLE_CHANGES
+
+# CatalogThread, Thread -> Bool
+# whether the stub.last_replies correctly aligns with old.posts according
+# to the reply count difference.
+#
+# This detects edge cases such as 1 post deletion and 2 new posts happening
+# at the same time, which will look like a +1 reply difference, but won't be
+# aligned at the +1 level:
+#
+# expected:
+#   old : [1 2 3 4 5 ]
+#   new : [1 2 3 4 5 6]
+#   stub:     [3 4 5 6]
+#
+# edge case:
+#   old: [1 2 3 4 5]
+#   new: [1 3 4 5 6 7] (2 is deleted)
+#   stub:  [3 4 5 6 7]
+#
+aligned = (stub, old) ->
+  count-diff = stub.replies - old.replies
+
+  expected-overlap = last5.slice 0, -count-diff
+  actual-overlap   = old.posts.slice 1 .slice -(5 - count-diff)
+
+  for post, i in actual-overlap
+    if not post.equals expected-overlap[i]
+      return false
+  return true
+
+# {no: Thread}, Catalog -> (threads: {no: Thread}, stale: [thread-no])
+merge-catalog = (old-threads, catalog) ->
+  threads = {}
+  stale = []
+
+  # for each page's threads [{threads: []}, ...]
+  for {threads} in catalog then for stub in threads
+    thread-no = stub.no
+
+    if (old = old-threads[thread-no])?
+      if compare stub, old is Compare.UNRECONCILABLE_CHANGES
+        stale.push stub.no
+        # we can't trust the new data, so use old thread.
+        threads[thread-no] = old
+      else
+        threads[thread-no] = new Thread do
+          old
+          # graft last_replies on top of existing old posts
+          old.posts[0 til -(stub.last_replies.length)] ++ stub.last_replies
+    else
+      if thread.omitted_posts > 0
+        # we don't have all the posts, so we need to fetch the thread page.
+        stale.push thread-no
+        # don't bother adding the stub thread to `threads` since we'll
+        # fetch it later anyway.
+      else
+        threads[thread-no] = Thread.from-catalog stub
+
+  return {threads, stale}
+
+diff-threads = (old, nu) ->
+  diff = new Diff [], [], [], [], [], []
+
+  for thread-no, old-thread in old
+    if (nu-thread = nu[thread-no])?
+      diff.append do
+        diff-posts old-thread.posts, nu-thread.posts
+      if compare old-thread, nu-thread is Compare.ATTRIBUTE_CHANGES
+        # TODO make attribute diff format.
+        diff.changed-threads.push nu-thread
+    else
+      diff.deleted-posts.push thread-no
+
+  for thread-no, nu-thread in nu
+    unless old[thread-no]?
+      diff.new-threads.push nu-thread
+      diff.new-posts.push ..nu-thread.posts
+
+  return diff
+
+class State
+  ({
+    @diff # Diff
+    @threads # {thread-no: thread}
+    # TODO record bump order, which is not derivable from threads otherwise.
+    # we'll probably want a string-diff algorithm to generate
+    # minimum-edit-distance mappings when bump order does change.
+    @last-modified # Date
+    # threads which need a full thread page poll.
+    @stale # [thread-no]
+    @timestamp # Date, i.e. last checked
+  }) ->
 
 # 4chan replicator through the JSON API
 #
@@ -128,11 +279,10 @@ module.exports = class Yotsuba
 
     # initial board state
     init ? {
-      diff: new BoardDiff
-      threads: {} # thread-no: thread
-      bump-order: [] # thread-no, in bump order
+      diff: new BoardDiff [], [], [], [], [] ,[]
+      threads: {}
       last-modified: new Date
-      stale: {} # set of thread-no, to mark threads that need to be polled
+      stale: []
     }
   ) ->
     # Bus Response
@@ -155,148 +305,48 @@ module.exports = class Yotsuba
 
     @responses-not-modified = @responses.filter (.status-code is 304)
 
-    updater = (mutator) ->
-      (board, update) -> with board
-        # reset diff
-        ..diff = new BoardDiff
-        # call mutator with board as `this`
-        mutator.call .., update
-        # board is now mutated
-        ..last-check = new Date
-
-    for thread-no, thread of init.threads
-      if thread.replies is not (thread.posts.length - 1)
-        console.error "thread #{thread-no} had #{thread.posts.length - 1} posts, \
-                      but was supposed to have #{thread.replies}!".red.bold
-        console.log thread if not thread.replies?
-        delete init.threads[thread-no]
-
-    # Property Board, see init parameter for structure
-    @board = Bacon.update init,
-      [@catalog-responses] updater ({body: catalog}: res) !->
-        @last-modified = new Date res.headers[\last-modified]
-
-        prev-threads = @threads
-        # all non-deleted threads are moved here and prev-threads is
-        # mutated so it will only contain deleted threads after the for loop
-        @threads = {}
-
-        order = 0
-        # for each page's threads [{threads: []}, ...]
-        for {threads} in catalog then for thread in threads
-          thread-no = thread.no
-
-          last5 = thread.last_replies
-          new-posts = []
-
-          if (prev = prev-threads[thread-no])?
-            reply-count-diff = thread.replies - prev.replies
-
-            if 0 < reply-count-diff <= 5
-              expected-new-posts = last5.slice -(reply-count-diff)
-              expected-already-present-posts = last5.slice 0, -reply-count-diff
-              overlapping-prev-posts =
-                prev.posts.slice 1 .slice -(5 - reply-count-diff)
-
-              if not @stale[thread-no]
-                for post, i in expected-already-present-posts
-                  prev-post = overlapping-prev-posts[i]
-                  if post.no is not prev-post.no
-                    # then some post before this one got deleted, so
-                    # we have to mark this thread as stale and abort
-                    console.log "#{thread-no} overlapping posts don't match, expecting \
-                                  #{reply-count-diff} new replies, already present:
-                                  #{expected-already-present-posts.length}".red
-                    console.log expected-already-present-posts.map (.no)
-                    console.log overlapping-prev-posts.map (.no)
-
-                    console.log "last_replies: #{last5.map (.no)}"
-                    console.log "expected new: #{expected-new-posts.map (.no)}"
-                    console.log "prev last 5: #{prev.posts.slice -5 .map (.no)}"
-                    console.log "prev alleged replies: #{prev.replies}"
-                    console.log "prev actual replies: #{prev.posts.length - 1}"
-                    console.log "curr replies: #{thread.replies}"
-
-                    @stale[thread-no] = true
-                    break
-                  else # the same
-                    if post.filedeleted is not prev-post.filedeleted \
-                       or post.com is not prev-post.com
-                      @diff.changed-posts.push post
-
-              if not @stale[thread-no]
-                new-posts = expected-new-posts
-                for new-posts
-                  if not ..?
-                    console.error "error! #{expected-new-posts}".red.bold
-                @diff.new-posts.push ...new-posts
-                new-posts-with-images = new-posts.filter (.filename?) .length
-
-                expected-images-diff = thread.images - prev.images
-
-                if new-posts-with-images is not expected-images-diff
-                  console.log "#thread-no images got deleted expected: \
-                                #{expected-images-diff} \
-                                got: #{new-posts-with-images}".red
-                  # some images got deleted
-                  @stale[thread-no] = true
-
-            else if reply-count-diff < 0
-              # some replies got deleted
-              # so just wait till we poll the thread to pick up the changes
-              console.log "#thread-no replies got deleted diff: \
-                          #{thread.replies} - #{prev.replies} = \
-                          #{reply-count-diff}".red
-              @stale[thread-no] = true
-
-            # set new thread
-            delete prev-threads[thread-no]
-            @threads[thread-no] = prev
-              old-order = ..order
-              new-order = order++
-              if new-order is not old-order
-                @diff.bump-order[thread-no] = [old-order, new-order]
-              ..order = new-order
-              ..posts.push ...new-posts
-              .. <<< thread{
-                bumplimit, imagelimit, replies, images, sticky, closed
-              }
-          else
-            # new thread
-            new-thread = Thread.from-catalog thread
-              @threads[thread-no] = ..
-
-              @diff.new-posts.push .....posts
-              @diff.new-threads.push ..
-
-              if thread.omitted_posts > 0
-                @stale[thread-no] = true
-
-        # now all that remain are deleted
-        for thread-no, thread of prev-threads
-          @diff.deleted-threads.push thread
-          delete @stale[thread-no]
-
-      [@thread-responses] updater ({body: thread}) !->
+    # Property State
+    @board = Bacon.update new State(init),
+      [@catalog-responses] (old, {body: catalog}: res) ->
+        {threads: new-threads, stale} = merge-catalog old-threads, catalog
+        new State do
+          diff: diff-threads old.threads, new-threads
+          threads: new-threads
+          last-modified: new Date res.headers[\last-modified]
+          stale: stale
+          timestamp: new Date
+      [@thread-responses] (old, {body: thread}) !->
         new-thread = Thread.from-api-thread thread
-        old-thread = @threads[thread-no]
+        old-thread = @threads[thread.no]
+        last-modified = new Date res.headers[\last-modified]
+        diff = diff-posts old-thread, new-thread
 
-        post-diff = diff-posts @threads[thread-no], new-thread
-        @diff.changed-posts = post-diff.changed
-        @diff.new-posts = post-diff.added
-        @diff.deleted-posts = post-diff.deleted
-        
-        # no longer stale
-        delete @stale[thread-no]
+        debug-thread new-thread, old-thread, diff
 
-        debug-thread new-thread, old-thread, @diff
+        new State do
+          diff: diff
+          threads: {...old.threads, (thread.no): new-thread}
+          last-modified:
+            if old.last-modified > last-modified
+              # e.g. just fetching a stale thread
+              old.last-modified
+            else
+              last-modified
+          stale: with {...old.stale} then delete ..[thread.no]
+          timestamp: new Date
 
-      [@thread-responses-not-found] updater (res) !->
+      [@thread-responses-not-found] (old, res) !->
         {thread-no} = res.req
-        @diff.deleted-threads.push delete @threads[thread-no]
-        delete @stale[thread-no]
+        new State do
+          diff: new Diff [], [thread-no], [], [], [], []
+          threads: with {...old.threads} then delete ..[thread.no]
+          last-modified: old.last-modified
+          stale: with {...old.stale} then delete ..[thread.no]
+          timestamp: new Date
 
-      [@responses-not-modified] updater -> # nothing, just update times
+      [@responses-not-modified] (old) ->
+        # simply update State timestamp
+        new State old
 
     @changes = @board.changes!
 
