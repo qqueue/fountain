@@ -1,6 +1,7 @@
 require! {
   Bacon: \baconjs
   _: \prelude-ls
+  colors
 }
 
 # The implementations for reconciling changes from catalog/thread fetches
@@ -14,7 +15,7 @@ class Diff
     @deleted-threads
     # e.g. sticky/locked. If thread merely has reply differences, it's not
     # counted as 'changed'.
-    @changed-posts
+    @changed-threads # see format in Thread.attribute-diff
 
     @new-posts # includes new thread OPs
     # because the catalog page doesn't show a last-modified date for
@@ -44,6 +45,7 @@ class Post
     @tn_w, @tn_h, @filedeleted, @spoiler}) ~>
 
   equals: (other) ->
+    return false unless other?
     for k, v of this
       if other[k] is not v
         return false
@@ -55,16 +57,21 @@ class Thread
     posts) ->
       @posts = posts.map Post
 
-  stub-equal: (stub) ->
-    for k, v of this when k is not \posts
-      if other[k] is not v
-        return false
-
-    for post, i in @posts[0 til -5]
-      if not post.equals stub.last_replies[i]
-        return false
+  equals-attributes: (other) ->
+    for k, v of this
+      unless k is \posts or k is \replies or k is \images
+        if other[k] is not v
+          return false
 
     return true
+
+  @attribute-diff = (left, right) ->
+    diff = []
+    for k of left
+      unless k is \posts or k is \replies or k is \images
+        if left[k] is not right[k]
+          diff.push {key: k, left: left[k], right: right[k]}
+    return diff
 
   @from-catalog = (catalog-thread, order) ->
     new Thread do
@@ -133,38 +140,15 @@ debug-thread = (nu, old, board-diff) ->
       replies diff: prev #{prev.replies} cur #{thread-data.replies}
       """.yellow.bold
 
-# TODO this compare enum can probably be refactored into
-# reconcilable: boolean, since UNCHANGED is stub-equal essentially,
-# and ATTRIBUTE_CHANGES has to be detected in diff-threads anyway.
-Compare =
-  UNCHANGED              : 0
-  # e.g. sticky -> unsticky. Implies that `replies` and `images` haven't changed,
-  # since that's covered by RECONCILABLE_POSTS.
-  ATTRIBUTE_CHANGES      : 1
-  # old.reples[0...-5] ++ nu.last_replies reflects the actual state
-  # of the thread according to the thread attributes. If reconcilable, then
-  # we can update the thread by doing the concatenation, otherwise we have
-  # to re-fetch the thread page. Most changes should fall into this category.
-  # Since this means that `replies` and `images` have changed, this implies
-  # NEW_ATTRIBUTES.
-  RECONCILABLE_POSTS     : 2
-  # A thread pull is required to merge all changes, e.g. deletions earlier in
-  # the thread
-  UNRECONCILABLE_CHANGES : 3
-
-# CatalogThread, Thread -> Compare
-compare = (stub, old) ->
-  if old-replies.stub-equal stub
-    Compare.UNCHANGED
-  else if stub.replies is old.replies
-  and stub.images is old.images
-    Compare.NEW_ATTRIBUTES
-  else if 0 <= (stub.replies - old.replies) <= 5
-  and     0 <= (stub.images  - old.images)  <= 5
-  and     aligned stub, old
-    Compare.RECONCILABLE_POSTS
-  else
-    Compare.UNRECONCILABLE_CHANGES
+# Thread, Catalog-Thread -> Bool
+# Whether old.reples[0...-5] ++ nu.last_replies reflects the actual state
+# of the thread according to the thread attributes. If reconcilable, then
+# we can update the thread by doing the concatenation, otherwise we have
+# to re-fetch the thread page. Most changes should fall into this category.
+reconcilable = (old, stub) ->
+  0 <= (stub.replies - old.replies) <= 5 and
+  0 <= (stub.images  - old.images)  <= 5 and
+  aligned stub, old
 
 # CatalogThread, Thread -> Bool
 # whether the stub.last_replies correctly aligns with old.posts according
@@ -177,7 +161,7 @@ compare = (stub, old) ->
 # expected:
 #   old : [1 2 3 4 5 ]
 #   new : [1 2 3 4 5 6]
-#   stub:     [3 4 5 6]
+#   stub:   [2 3 4 5 6]
 #
 # edge case:
 #   old: [1 2 3 4 5]
@@ -185,9 +169,9 @@ compare = (stub, old) ->
 #   stub:  [3 4 5 6 7]
 #
 aligned = (stub, old) ->
-  count-diff = stub.replies - old.replies
+  count-diff = old.replies - stub.replies
 
-  expected-overlap = last5.slice 0, -count-diff
+  expected-overlap = stub.last_replies.slice 0, -count-diff || 9e9
   actual-overlap   = old.posts.slice 1 .slice -(5 - count-diff)
 
   for post, i in actual-overlap
@@ -197,7 +181,7 @@ aligned = (stub, old) ->
 
 # {no: Thread}, Catalog -> (threads: {no: Thread}, stale: [thread-no])
 merge-catalog = (old-threads, catalog) ->
-  threads = {}
+  new-threads = {}
   stale = []
 
   # for each page's threads [{threads: []}, ...]
@@ -205,43 +189,44 @@ merge-catalog = (old-threads, catalog) ->
     thread-no = stub.no
 
     if (old = old-threads[thread-no])?
-      if compare stub, old is Compare.UNRECONCILABLE_CHANGES
+      if reconcilable old, stub
+        new-threads[thread-no] = new Thread do
+          stub
+          # graft last_replies on top of existing old posts
+          [old.posts.0] ++ \
+          old.posts.slice(1).slice(0, -(stub.last_replies.length) || 9e9) ++ \
+          stub.last_replies
+      else
         stale.push stub.no
         # we can't trust the new data, so use old thread.
-        threads[thread-no] = old
-      else
-        threads[thread-no] = new Thread do
-          old
-          # graft last_replies on top of existing old posts
-          old.posts[0 til -(stub.last_replies.length)] ++ stub.last_replies
+        new-threads[thread-no] = old
     else
-      if thread.omitted_posts > 0
+      if stub.omitted_posts > 0
         # we don't have all the posts, so we need to fetch the thread page.
         stale.push thread-no
-        # don't bother adding the stub thread to `threads` since we'll
-        # fetch it later anyway.
+        new-threads[thread-no] = new Thread stub, [stub] ++ stub.last_replies
       else
-        threads[thread-no] = Thread.from-catalog stub
+        new-threads[thread-no] = Thread.from-catalog stub
 
-  return {threads, stale}
+  return {threads: new-threads, stale}
 
 diff-threads = (old, nu) ->
   diff = new Diff [], [], [], [], [], []
 
-  for thread-no, old-thread in old
+  for thread-no, old-thread of old
     if (nu-thread = nu[thread-no])?
       diff.append do
         diff-posts old-thread.posts, nu-thread.posts
-      if compare old-thread, nu-thread is Compare.ATTRIBUTE_CHANGES
-        # TODO make attribute diff format.
-        diff.changed-threads.push nu-thread
+      if not old-thread.equals-attributes nu-thread
+        diff.changed-threads.push do
+          Thread.attribute-diff old-thread, nu-thread
     else
-      diff.deleted-posts.push thread-no
+      diff.deleted-threads.push thread-no
 
-  for thread-no, nu-thread in nu
+  for thread-no, nu-thread of nu
     unless old[thread-no]?
       diff.new-threads.push nu-thread
-      diff.new-posts.push ..nu-thread.posts
+      diff.new-posts.push ...nu-thread.posts
 
   return diff
 
@@ -366,3 +351,234 @@ module.exports = class Yotsuba
         path: "/#board-name/catalog.json"
         headers:
           \If-Modified-Since : new Date(board.last-modified)toISOString!
+
+# unit tests
+
+require! {assert, util}
+
+posts = (...nos) -> nos.map -> new Post {no: it}
+
+assert-aligned = (should, old-replies, nu-replies, old, last5) ->
+  assert do
+    should is aligned do
+      * replies: old-replies, last_replies: last5.map -> new Post {no: it}
+      * replies: nu-replies , posts:          old.map -> new Post {no: it}
+    """
+    expected #{if should then '' else 'non-'}alignment:
+      #old-replies: #old
+      #nu-replies: #last5""".red.bold
+
+(.for-each (args) !-> assert-aligned.apply void, args) [] =
+  * true, 1, 1
+    [0 1]
+    [  1]
+  * true, 0, 1
+    [0]
+    [  1]
+  * true, 5, 5,
+    [0 1 2 3 4 5]
+    [  1 2 3 4 5]
+  * true, 5, 6,
+    [0 1 2 3 4 5]
+    [    2 3 4 5 6]
+  * true, 5, 9,
+    [0 1 2 3 4 5]
+    [          5 6 7 8 9]
+  * true, 10, 10
+    [0 1 2 3 4 5 6 7 8 9 10]
+    [            6 7 8 9 10]
+  * false, 5, 6
+    [0 1 2 3 4 5]
+    #0 1 x 3 4 5 6 7
+    [    3 4 5 6 7]
+
+assert-deep-equal = (actual, expected) !->
+  assert.deep-equal actual, expected, """
+
+    actual:
+    #{util.inspect actual, {depth: 10}}
+
+    expected:
+    #{util.inspect expected, {depth: 10}}
+  """.red
+
+assert-deep-equal do
+  diff-posts do
+    []
+    [new Post {no: 1}]
+  new Diff [] [] [] [new Post {no: 1}] [] []
+assert-deep-equal do
+  diff-posts do
+    [new Post {no: 1}]
+    []
+  new Diff [] [] [] [] [new Post {no: 1}] []
+assert-deep-equal do
+  diff-posts do
+    [new Post {no: 1}]
+    [new Post {no: 1, filedeleted: true}]
+  new Diff [] [] [] [] [] [new Post {no: 1, filedeleted: true}]
+
+assert-deep-equal do
+  merge-catalog do
+    {
+      0: new Thread {no: 0, replies: 0, images: 0}, [new Post {no: 0}]
+    }
+    [
+      threads: [
+        {no: 0, last_replies: [], replies: 0, images: 0}
+      ]
+    ]
+  {
+    threads: { 0: new Thread {no: 0, replies: 0, images: 0}, [new Post {no: 0}] }
+    stale: []
+  }
+
+assert-deep-equal do
+  merge-catalog do
+    {
+      0: new Thread {no: 0, replies: 0, images: 0}, [new Post {no: 0}]
+    }
+    [
+      threads: [
+        {no: 0, last_replies: [{no: 1}], replies: 1, images: 0}
+      ]
+    ]
+  {
+    threads: {
+      0: new Thread do
+        {no: 0, replies: 1, images: 0}
+        [new Post({no: 0}), new Post({no: 1})]
+    }
+    stale: []
+  }
+
+assert-deep-equal do
+  merge-catalog do
+    {}
+    [
+      threads: [
+        {no: 0, last_replies: [{no: 1}], replies: 1, images: 0}
+      ]
+    ]
+  {
+    threads: {
+      0: new Thread do
+        {no: 0, replies: 1, images: 0}
+        [new Post({no: 0}), new Post({no: 1})]
+    }
+    stale: []
+  }
+
+assert-deep-equal do
+  merge-catalog do
+    {
+      0: new Thread {no: 0, replies: 0, images: 0}, [new Post {no: 0}]
+    }
+    [
+      threads: []
+    ]
+  {
+    threads: {}
+    stale: []
+  }
+
+assert-deep-equal do
+  merge-catalog do
+    {
+      0: new Thread do
+        {no: 0, replies: 5, images: 0}
+        posts 0 1 2 3 4 5
+    }
+    [
+      threads: [
+        {
+          no: 0
+          last_replies: posts 3 4 5 6 7
+          replies: 6
+          images: 0
+        }
+      ]
+    ]
+  {
+    threads: {
+      0: new Thread do
+        {no: 0, replies: 5, images: 0}
+        posts 0 1 2 3 4 5
+    }
+    stale: [0] # expect unreconcilable
+  }
+
+assert-deep-equal do
+  merge-catalog do
+    {}
+    [
+      threads: [
+        {
+          no: 0
+          last_replies: posts 3 4 5 6 7
+          replies: 7
+          images: 0
+          omitted_posts: 2
+        }
+      ]
+    ]
+  {
+    threads: {
+      0: new Thread {no: 0, replies: 7, images: 0}, posts 0 3 4 5 6 7
+    }
+    stale: [0] # expect needs a fetch
+  }
+
+assert-deep-equal do
+  diff-threads {} {}
+  new Diff [] [] [] [] [] []
+
+assert-deep-equal do
+  diff-threads do
+    {}
+    {
+      0: new Thread {no: 0, replies: 0, images: 0}, [new Post {no: 0}]
+    }
+  new Diff do
+    [new Thread {no: 0, replies: 0, images: 0}, [new Post {no: 0}]] [] []
+    [new Post {no: 0}] [] []
+
+assert-deep-equal do
+  diff-threads do
+    {
+      0: new Thread {no: 0, replies: 0, images: 0}, [new Post {no: 0}]
+    }
+    {}
+  new Diff do
+    [] ['0'] []
+    [] [] []
+
+assert-deep-equal do
+  diff-threads do
+    {
+      0: new Thread {no: 0, replies: 0, images: 0}, [new Post {no: 0}]
+    }
+    {
+      0: new Thread {no: 0, replies: 1, images: 0}, posts 0 1
+    }
+  new Diff do
+    [] [] []
+    [new Post {no: 1}] [] []
+
+assert-deep-equal do
+  diff-threads do
+    {
+      0: new Thread do
+        {no: 0, replies: 0, images: 0, sticky: true}
+        [new Post {no: 0}]
+    }
+    {
+      0: new Thread do
+        {no: 0, replies: 0, images: 0, sticky: false}
+        [new Post {no: 0}]
+    }
+  new Diff do
+    [] [] [[{key: \sticky, left: true, right: false}]]
+    [] [] []
+
+console.error "passed!".green.bold
