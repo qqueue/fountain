@@ -17,7 +17,7 @@ text-content = ->
     .replace /&#039;/g \'
 
 y = new Yotsuba do
-  \diy
+  \a
 
   init = if fs.exists-sync \a.json
     JSON.parse fs.read-file-sync \a.json

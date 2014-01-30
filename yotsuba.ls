@@ -65,6 +65,11 @@ class Thread
 
     return true
 
+  check: ->
+    unless @replies is (@posts.length - 1)
+      console.log "Unmatched Thread #{@no}: expected #{@replies} replies, got #{@posts.length - 1}".magenta.bold
+    return @replies is (@posts.length - 1)
+
   @attribute-diff = (left, right) ->
     diff = []
     for k of left
@@ -79,8 +84,11 @@ class Thread
       # 4chan's thread object has all the OP information on it.
       [catalog-thread] ++ (catalog-thread.last_replies || [])
 
-  @from-api-thread = (api-thread, order) ->
+  @from-api-thread = (api-thread) ->
     op = api-thread.posts.0
+
+    console.log "Unmatched Thread #{op.no}: expected #{op.replies} replies, got #{api-thread.posts.length - 1}".rainbow.bold unless op.replies is (api-thread.posts.length - 1)
+
     new Thread do
       # individual thread is {posts: [op, ...]}, but confusingly the op has
       # all the usual thread-related data on it e.g. reply count.
@@ -152,10 +160,26 @@ debug-thread = (nu, old, board-diff) ->
 # we can update the thread by doing the concatenation, otherwise we have
 # to re-fetch the thread page. Most changes should fall into this category.
 reconcilable = (old, stub) ->
-  old.replies is (old.posts.length - 1) and
-  0 <= (stub.replies - old.replies) <= 5 and
-  0 <= (stub.images  - old.images)  <= 5 and
-  aligned old, stub
+  if old.replies is not (old.posts.length - 1)
+    console.log "stale: expecting #{old.replies} replies, got #{old.posts.length - 1}"
+    return false
+
+  unless 0 <= (stub.replies - old.replies) <= 5
+    console.log "got #{stub.replies - old.replies} reply difference, unreconcilable"
+    return false
+  unless 0 <= (stub.images - old.images) <= 5
+    console.log "got #{stub.images - old.images} image difference, unreconcilable"
+    return false
+
+  unless aligned old, stub
+    console.log "apparently not aligned"
+    return false
+
+  return true
+  #old.replies is (old.posts.length - 1) and
+  #0 <= (stub.replies - old.replies) <= 5 and
+  #0 <= (stub.images  - old.images)  <= 5 and
+  #aligned old, stub
 
 # CatalogThread, Thread -> Bool
 # whether the stub.last_replies correctly aligns with old.posts according
@@ -201,6 +225,12 @@ aligned = (old, stub) ->
       return false
   return true
 
+graft = (old, stub) ->
+  expected-length = stub.replies + 1 # including op
+  last_replies = stub.last_replies || []
+  old-contrib = old.posts.slice(0, (expected-length - last_replies.length))
+  return old-contrib ++ last_replies
+
 # {no: Thread}, Catalog -> (threads: {no: Thread}, stale: [thread-no])
 merge-catalog = (old-threads, catalog) ->
   new-threads = {}
@@ -212,19 +242,48 @@ merge-catalog = (old-threads, catalog) ->
 
     if (old = old-threads[thread-no])?
       if reconcilable old, stub
+
+        g = graft old, stub
+
+        unless stub.replies + 1 == g.length
+          console.log """
+          mismatch!
+          expecting #{g.map (.no)}
+          to be #{stub.replies + 1} long, is actually #{g.length}.
+
+          old: #{old.posts.map (.no)}
+          old-replies: #{old.replies}
+          new-replies: #{stub.replies}
+          new-last5: #{stub.last_replies.map (.no)}
+          """.red.bold
+
         new-threads[thread-no] = new Thread do
           stub
           # graft last_replies on top of existing old posts
-          [old.posts.0] ++ \
-          old.posts.slice(1).slice(0, -(stub.last_replies?length) || 9e9) ++ \
-          (stub.last_replies || [])
+          g
+
+        unless new-threads[thread-no].check!
+          console.log """
+          expected last5: #{(stub.last_replies || []).map (.no)}
+          actual   last5: #{new-threads[thread-no].posts.slice(-5).map (.no)}
+          """.magenta.bold
       else
+        console.log """
+        I think #thread-no is stale because it had
+        #{old.replies} replies and now it has #{stub.replies} replies
+        #{old.images} images and now it has #{stub.images} images
+        old last5: #{old.posts.slice -5 .map (.no)}
+        new last5: #{(stub.last_replies || []).map (.no)}
+        """.yellow.bold
+
         stale.push stub.no
         # we can't trust the new data, so use old thread.
         new-threads[thread-no] = old
     else
       if stub.omitted_posts > 0
         # we don't have all the posts, so we need to fetch the thread page.
+        console.log "I think #thread-no is new and it has #{stub.omitted_posts} \
+                     omitted_posts, so it's stale".yellow.bold
         stale.push thread-no
       new-threads[thread-no] = Thread.from-catalog stub
 
@@ -364,7 +423,7 @@ module.exports = class Yotsuba
         {thread-no} = res.req
         new State do
           diff: new Diff [], [thread-no], [], [], [], []
-          threads: with {...old.threads} then delete ..[thread.no]
+          threads: with {...old.threads} then delete ..[thread-no]
           last-modified: old.last-modified
           stale: old.stale.filter (is not thread-no)
           last-poll: new Date
@@ -440,8 +499,9 @@ assert-aligned = (should, old-replies, nu-replies, old, last5) ->
     [ 71175, 81480, 81509, 81535, 81619, 82267 ]
     [ 81509, 81535, 81619, 82267, 82340 ]
 
-assert-deep-equal = (actual, expected) !->
+assert-deep-equal = (desc, actual, expected) !->
   assert.deep-equal actual, expected, """
+    failed: #desc
 
     actual:
     #{util.inspect actual, {depth: 10}}
@@ -450,23 +510,41 @@ assert-deep-equal = (actual, expected) !->
     #{util.inspect expected, {depth: 10}}
   """.red
 
-assert-deep-equal do
+assert-deep-equal "graft, no-op",
+  graft do
+    {posts: [0 1 2 3 4 5]}
+    {replies: 5, last_replies: [1 2 3 4 5]}
+  [0 1 2 3 4 5]
+
+assert-deep-equal "graft, small add",
+  graft do
+    {posts: [0]}
+    {replies: 1, last_replies: [1]}
+  [0 1]
+
+assert-deep-equal "graft, add + omission",
+  graft do
+    {posts: [0 1 2 3 4]}
+    {replies: 5, last_replies: [1 2 3 4 5]}
+  [0 1 2 3 4 5]
+
+assert-deep-equal "diff-posts add",
   diff-posts do
     []
     [new Post {no: 1}]
   new Diff [] [] [] [new Post {no: 1}] [] []
-assert-deep-equal do
+assert-deep-equal "diff-posts remove",
   diff-posts do
     [new Post {no: 1}]
     []
   new Diff [] [] [] [] [new Post {no: 1}] []
-assert-deep-equal do
+assert-deep-equal "diff-posts changed",
   diff-posts do
     [new Post {no: 1}]
     [new Post {no: 1, filedeleted: true}]
   new Diff [] [] [] [] [] [new Post {no: 1, filedeleted: true}]
 
-assert-deep-equal do
+assert-deep-equal "merge-catalog no-op",
   merge-catalog do
     {
       0: new Thread {no: 0, replies: 0, images: 0}, [new Post {no: 0}]
@@ -481,7 +559,7 @@ assert-deep-equal do
     stale: []
   }
 
-assert-deep-equal do
+assert-deep-equal "merge-catalog new post",
   merge-catalog do
     {
       0: new Thread {no: 0, replies: 0, images: 0}, [new Post {no: 0}]
@@ -500,7 +578,7 @@ assert-deep-equal do
     stale: []
   }
 
-assert-deep-equal do
+assert-deep-equal "merge-catalog new thread",
   merge-catalog do
     {}
     [
@@ -517,7 +595,7 @@ assert-deep-equal do
     stale: []
   }
 
-assert-deep-equal do
+assert-deep-equal "merge-catalog remove thread",
   merge-catalog do
     {
       0: new Thread {no: 0, replies: 1, images: 0}, [new Post {no: 0}]
@@ -530,7 +608,7 @@ assert-deep-equal do
     stale: []
   }
 
-assert-deep-equal do
+assert-deep-equal "merge-catalog unreconcilable",
   merge-catalog do
     {
       0: new Thread do
@@ -556,7 +634,7 @@ assert-deep-equal do
     stale: [0] # expect unreconcilable
   }
 
-assert-deep-equal do
+assert-deep-equal "merge-catalog omitted_posts",
   merge-catalog do
     {}
     [
@@ -577,11 +655,11 @@ assert-deep-equal do
     stale: [0] # expect needs a fetch
   }
 
-assert-deep-equal do
+assert-deep-equal "diff-threads no-op",
   diff-threads {} {}
   new Diff [] [] [] [] [] []
 
-assert-deep-equal do
+assert-deep-equal "diff-threads add",
   diff-threads do
     {}
     {
@@ -591,7 +669,7 @@ assert-deep-equal do
     [new Thread {no: 0, replies: 0, images: 0}, [new Post {no: 0}]] [] []
     [new Post {no: 0}] [] []
 
-assert-deep-equal do
+assert-deep-equal "diff-threads delete",
   diff-threads do
     {
       0: new Thread {no: 0, replies: 0, images: 0}, [new Post {no: 0}]
@@ -601,7 +679,7 @@ assert-deep-equal do
     [] ['0'] []
     [] [] []
 
-assert-deep-equal do
+assert-deep-equal "diff-threads add post",
   diff-threads do
     {
       0: new Thread {no: 0, replies: 0, images: 0}, [new Post {no: 0}]
@@ -613,7 +691,7 @@ assert-deep-equal do
     [] [] []
     [new Post {no: 1}] [] []
 
-assert-deep-equal do
+assert-deep-equal "diff-threads attributes",
   diff-threads do
     {
       0: new Thread do
@@ -628,5 +706,6 @@ assert-deep-equal do
   new Diff do
     [] [] [[{key: \sticky, left: true, right: false}]]
     [] [] []
+
 
 console.error "passed!".green.bold
