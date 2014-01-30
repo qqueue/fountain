@@ -17,15 +17,16 @@ text-content = ->
     .replace /&#039;/g \'
 
 y = new Yotsuba do
-  \a
+  \diy
+
   init = if fs.exists-sync \a.json
     JSON.parse fs.read-file-sync \a.json
 
-if init?
-  posts = []
+#if init?
+  #posts = []
 
-  for n, thread of init.threads
-    posts.push ...thread.posts
+  #for n, thread of init.threads
+    #posts.push ...thread.posts
 
   #ops = []
   #for posts
@@ -66,7 +67,7 @@ l.responses.filter (.status-code is not 200)
 
 y.board.on-value !({diff}: board) ->
   threads = _.values board.threads
-  missing = _.keys board.stale .map ->
+  missing = board.stale.map ->
     t = board.threads[it]
     return 0 unless t?
     t.replies - t.posts.length + 1
@@ -85,13 +86,13 @@ y.board.on-value !({diff}: board) ->
   console.log "#{threads.length} threads, \
     #{_.sum threads.map (.posts.length)} posts".white.bold
 
-  s = _.keys board.stale .length
+  s = board.stale.length
   if s > 0
-    console.log "#{_.keys board.stale .length} stale threads".red.bold
+    console.log "#{board.stale.length} stale threads".red.bold
 
   m = _.sum missing
   if m > 0
-    console.log "#{_.sum missing} missing".red.bold
+    console.log "#m missing".red.bold
 
   if diff.new-posts.length < 10
     for it in diff.new-posts

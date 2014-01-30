@@ -42,7 +42,7 @@ class Diff
 class Post
   ({@no, @resto, @now, @time, @tim, @id, @name, @trip, @email, @sub, @com, \
     @capcode, @country, @country_name, @filename, @ext, @fsize, @md5, @w, @h, \
-    @tn_w, @tn_h, @filedeleted, @spoiler}) ~>
+    @tn_w, @tn_h, @filedeleted, @spoiler}) ->
 
   equals: (other) ->
     return false unless other?
@@ -55,7 +55,7 @@ class Post
 class Thread
   ({@no, @time, @bumplimit, @imagelimit, @sticky, @closed, @replies, @images},
     posts) ->
-      @posts = posts.map Post
+      @posts = [new Post post for post in posts]
 
   equals-attributes: (other) ->
     for k, v of this
@@ -110,21 +110,26 @@ diff-posts = (old, nu) ->
     [] [] [] # thread differences
     added, deleted, changed
 
-most-wanted-thread = (board) ->
+most-wanted-thread = (state) ->
   most = void
   most-missing = -Infinity
-  for thread-no of board.stale
-    thread = board.threads[thread-no]
+  m = []
+
+  for thread-no in state.stale
+    thread = state.threads[thread-no]
     continue unless thread?
     missing = thread.replies - thread.posts.length + 1
+    m.push missing
     if missing > most-missing
       most = thread
       most-missing = missing
 
+  console.log m.sort((-)).join ' '
+
   return most
 
 debug-thread = (nu, old, board-diff) ->
-  diff = nu.replies - old.replies
+  diff = nu.posts.length - old.posts.length
   if diff > 0 and board-diff.new-posts.length is not diff
     console.error "expecting #diff more replies, got \
                    #{board-diff.new-posts.length}".yellow.bold
@@ -132,12 +137,13 @@ debug-thread = (nu, old, board-diff) ->
     console.error "expecting -#diff less replies, got \
                     #{board-diff.deleted-posts.length}".yellow.bold
 
-  if board-diff.new-posts.length is 0 and board-diff.changed-posts.length is 0
+  if board-diff.new-posts.length is 0
+  and board-diff.changed-posts.length is 0
   and board-diff.deleted-posts.length is 0
     console.error """
       Wasted thread poll!
-      length diff: prev #{prev.posts.length} cur #{thread.posts.length}
-      replies diff: prev #{prev.replies} cur #{thread-data.replies}
+      length diff: old #{old.posts.length} cur #{nu.posts.length}
+      replies diff: old #{old.replies} cur #{nu.replies}
       """.yellow.bold
 
 # Thread, Catalog-Thread -> Bool
@@ -146,9 +152,10 @@ debug-thread = (nu, old, board-diff) ->
 # we can update the thread by doing the concatenation, otherwise we have
 # to re-fetch the thread page. Most changes should fall into this category.
 reconcilable = (old, stub) ->
+  old.replies is (old.posts.length - 1) and
   0 <= (stub.replies - old.replies) <= 5 and
   0 <= (stub.images  - old.images)  <= 5 and
-  aligned stub, old
+  aligned old, stub
 
 # CatalogThread, Thread -> Bool
 # whether the stub.last_replies correctly aligns with old.posts according
@@ -168,14 +175,29 @@ reconcilable = (old, stub) ->
 #   new: [1 3 4 5 6 7] (2 is deleted)
 #   stub:  [3 4 5 6 7]
 #
-aligned = (stub, old) ->
-  count-diff = old.replies - stub.replies
+aligned = (old, stub) ->
+  count-diff = stub.replies - old.replies
 
-  expected-overlap = stub.last_replies.slice 0, -count-diff || 9e9
+  expected-overlap = (stub.last_replies || []).slice 0, -count-diff || 9e9
   actual-overlap   = old.posts.slice 1 .slice -(5 - count-diff)
 
+  if actual-overlap.length is not expected-overlap.length
+    console.log "unreconcilable: #{stub.no}"
+    console.log "old      " old.posts.map (.no)
+    console.log "last5    " stub.last_replies.map (.no)
+    console.log "Expected " expected-overlap.map (.no)
+    console.log "Actual   " actual-overlap.map (.no)
+    console.log "old " old.replies, " new ", stub.replies
+    return false
+
   for post, i in actual-overlap
-    if not post.equals expected-overlap[i]
+    if post.no is not expected-overlap[i].no
+      console.log "unreconcilable: #{stub.no}"
+      console.log "old      " old.posts.map (.no)
+      console.log "last5    " stub.last_replies.map (.no)
+      console.log "Expected " expected-overlap.map (.no)
+      console.log "Actual   " actual-overlap.map (.no)
+      console.log "old " old.replies, " new ", stub.replies
       return false
   return true
 
@@ -194,8 +216,8 @@ merge-catalog = (old-threads, catalog) ->
           stub
           # graft last_replies on top of existing old posts
           [old.posts.0] ++ \
-          old.posts.slice(1).slice(0, -(stub.last_replies.length) || 9e9) ++ \
-          stub.last_replies
+          old.posts.slice(1).slice(0, -(stub.last_replies?length) || 9e9) ++ \
+          (stub.last_replies || [])
       else
         stale.push stub.no
         # we can't trust the new data, so use old thread.
@@ -204,9 +226,7 @@ merge-catalog = (old-threads, catalog) ->
       if stub.omitted_posts > 0
         # we don't have all the posts, so we need to fetch the thread page.
         stale.push thread-no
-        new-threads[thread-no] = new Thread stub, [stub] ++ stub.last_replies
-      else
-        new-threads[thread-no] = Thread.from-catalog stub
+      new-threads[thread-no] = Thread.from-catalog stub
 
   return {threads: new-threads, stale}
 
@@ -230,18 +250,33 @@ diff-threads = (old, nu) ->
 
   return diff
 
+filter = (key, obj) ->
+  with {}
+    for k, v of obj when k is not key
+      ..[k] = v
+
+replace = (key, val, obj) ->
+  with {}
+    for k, v of obj when k is not key
+      ..[k] = v
+    ..[key] = val
+
 class State
   ({
     @diff # Diff
-    @threads # {thread-no: thread}
+    threads # {thread-no: thread}
     # TODO record bump order, which is not derivable from threads otherwise.
     # we'll probably want a string-diff algorithm to generate
     # minimum-edit-distance mappings when bump order does change.
     @last-modified # Date
     # threads which need a full thread page poll.
     @stale # [thread-no]
-    @timestamp # Date, i.e. last checked
+    @last-poll # Date
+    @last-catalog-poll # Date
   }) ->
+    @threads = {}
+    for thread-no, thread of threads
+      @threads[thread-no] = new Thread thread, thread.posts
 
 # 4chan replicator through the JSON API
 #
@@ -262,12 +297,13 @@ module.exports = class Yotsuba
   (
     board-name # String, e.g. 'a'
 
-    # initial board state
-    init ? {
-      diff: new BoardDiff [], [], [], [], [] ,[]
+    init = {
+      diff: new Diff [], [], [], [], [] ,[]
       threads: {}
       last-modified: new Date
       stale: []
+      last-poll: new Date 0
+      last-catalog-poll: new Date 0
     }
   ) ->
     # Bus Response
@@ -293,64 +329,73 @@ module.exports = class Yotsuba
     # Property State
     @board = Bacon.update new State(init),
       [@catalog-responses] (old, {body: catalog}: res) ->
-        {threads: new-threads, stale} = merge-catalog old-threads, catalog
+        {threads: new-threads, stale} = merge-catalog old.threads, catalog
         new State do
           diff: diff-threads old.threads, new-threads
           threads: new-threads
           last-modified: new Date res.headers[\last-modified]
           stale: stale
-          timestamp: new Date
-      [@thread-responses] (old, {body: thread}) !->
+          last-poll: new Date
+          last-catalog-poll: new Date
+      [@thread-responses] (old, {body: thread}: res) ->
         new-thread = Thread.from-api-thread thread
-        old-thread = @threads[thread.no]
-        last-modified = new Date res.headers[\last-modified]
-        diff = diff-posts old-thread, new-thread
+        old-thread = old.threads[new-thread.no]
+        diff = diff-posts old-thread.posts, new-thread.posts
 
         debug-thread new-thread, old-thread, diff
 
+        new-threads = replace new-thread.no, new-thread, old.threads
+
+        last-modified = new Date res.headers[\last-modified]
         new State do
           diff: diff
-          threads: {...old.threads, (thread.no): new-thread}
+          threads: new-threads
           last-modified:
             if old.last-modified > last-modified
               # e.g. just fetching a stale thread
               old.last-modified
             else
               last-modified
-          stale: with {...old.stale} then delete ..[thread.no]
-          timestamp: new Date
+          stale: old.stale.filter (is not new-thread.no)
+          last-poll: new Date
+          last-catalog-poll: old.last-catalog-poll
 
-      [@thread-responses-not-found] (old, res) !->
+      [@thread-responses-not-found] (old, res) ->
         {thread-no} = res.req
         new State do
           diff: new Diff [], [thread-no], [], [], [], []
           threads: with {...old.threads} then delete ..[thread.no]
           last-modified: old.last-modified
-          stale: with {...old.stale} then delete ..[thread.no]
-          timestamp: new Date
+          stale: old.stale.filter (is not thread-no)
+          last-poll: new Date
+          last-catalog-poll: old.last-catalog-poll
 
       [@responses-not-modified] (old) ->
-        # simply update State timestamp
-        new State old
+        new State do
+          diff: new Diff [], [], [], [], [], []
+          threads: old.threads
+          last-modified: old.last-modified
+          stale: old.stale
+          last-poll: new Date
+          last-catalog-poll: new Date
 
     @changes = @board.changes!
 
     # Stream Request
     # This Stream should be plugged into a receiver such as the Limiter in order
     # to perform the actual requests.
-    @requests = @board.sampled-by @ready .map (board) ->
+    @requests = @board.sampled-by @ready .map (state) ->
       # if there's a stale thread and the catalog is still fresh
-      thread = most-wanted-thread board
-      if thread? and Date.now! - board.last-modified < 10000ms
+      thread = most-wanted-thread state
+      if thread? and Date.now! - state.last-catalog-poll < 10000ms
         type: \thread
         thread-no: thread.no
         path: "/#board-name/res/#{thread.no}.json"
       else
-        # new catalog
         type: \catalog
         path: "/#board-name/catalog.json"
         headers:
-          \If-Modified-Since : new Date(board.last-modified)toISOString!
+          \If-Modified-Since : new Date(state.last-modified)toUTCString!
 
 # unit tests
 
@@ -361,8 +406,8 @@ posts = (...nos) -> nos.map -> new Post {no: it}
 assert-aligned = (should, old-replies, nu-replies, old, last5) ->
   assert do
     should is aligned do
-      * replies: old-replies, last_replies: last5.map -> new Post {no: it}
-      * replies: nu-replies , posts:          old.map -> new Post {no: it}
+      * replies: old-replies, posts:          old.map -> new Post {no: it}
+      * replies: nu-replies , last_replies: last5.map -> new Post {no: it}
     """
     expected #{if should then '' else 'non-'}alignment:
       #old-replies: #old
@@ -391,6 +436,9 @@ assert-aligned = (should, old-replies, nu-replies, old, last5) ->
     [0 1 2 3 4 5]
     #0 1 x 3 4 5 6 7
     [    3 4 5 6 7]
+  * true, 213, 214
+    [ 71175, 81480, 81509, 81535, 81619, 82267 ]
+    [ 81509, 81535, 81619, 82267, 82340 ]
 
 assert-deep-equal = (actual, expected) !->
   assert.deep-equal actual, expected, """
@@ -472,7 +520,7 @@ assert-deep-equal do
 assert-deep-equal do
   merge-catalog do
     {
-      0: new Thread {no: 0, replies: 0, images: 0}, [new Post {no: 0}]
+      0: new Thread {no: 0, replies: 1, images: 0}, [new Post {no: 0}]
     }
     [
       threads: []

@@ -47,5 +47,9 @@ module.exports = class Limiter
           rate-limit
 
     # send a ready event @cooldown milliseconds after the last request.
-    @ready.plug <| @cooldown.sampled-by @responses .flat-map Bacon.later
+    # XXX I'm convinced that cycles in the bacon cause memory leaks,
+    # so introduce an 'air-gap'
+    # @ready.plug <| @cooldown.sampled-by @responses .flat-map Bacon.later
+    @cooldown.sampled-by @responses .flat-map Bacon.later .on-value !~>
+      set-timeout (~> @ready.push true), 0
 

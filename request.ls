@@ -5,7 +5,7 @@ require! {
 }
 
 options =
-  host: \api.4chan.org
+  host: \a.4cdn.org
   headers:
     'User-Agent'      : 'Fountain/0.0.0'
     'Accept-Encoding' : 'gzip, deflate'
@@ -30,8 +30,8 @@ function slurp node-stream, cb
   # we use a simpler more-canonical buffer, joined on end
   buffer = []
   node-stream.on \data !-> buffer.push it
-  node-stream.on \end !->
-    cb buffer.join ''
+  node-stream.on \end !-> cb void, buffer.join ''
+  node-stream.on \error cb
 
 export
   get = (req) ->
@@ -43,20 +43,21 @@ export
       r.on \error !->
         cb it
       r.on \response (res) !->
-        data <- slurp decode-content res
+        err, data <- slurp decode-content res
+        if err?
+          cb err
+        else
+          body = void
+          if data? and data.length > 0
+            try
+              body = JSON.parse data
+            catch
+              cb e
+              return
 
-        try
-          body = JSON.parse data
-        catch
-          cb e
-          return
-
-        if body?
           cb null, {
             body
             req
             res.status-code
             res.headers
           }
-        else
-          cb new Error 'null body?'
