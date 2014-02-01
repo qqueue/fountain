@@ -35,14 +35,19 @@ module.exports = class Limiter
     # Clients can observe this directly.
     @responses = @ready-requests.flat-map get
 
+    @response-or-error = @responses.map-error ->
+      console.log it
+      error
+
     # after the last response is finished, wait until cooled down before making
-    # the next response. On errors, back off exponentially (capped at 1 minute)
+    # the next response. On errors, back off exponentially
     # until we get a successful request.
     # Bacon.Errors are mapped to a unique value so we can detect them.
-    @cooldown = @responses.map-error(-> error)
+    @cooldown = @response-or-error
       .scan rate-limit, (last-limit, res) ->
         if res is error or is-error res
-          last-limit * 2 <? 60_000ms
+          console.log "got error, delaying by #{last-limit * 2 <? 32_000ms} ms".red
+          last-limit * 2 <? 32_000ms
         else
           rate-limit
 
@@ -50,6 +55,6 @@ module.exports = class Limiter
     # XXX I'm convinced that cycles in the bacon cause memory leaks,
     # so introduce an 'air-gap'
     # @ready.plug <| @cooldown.sampled-by @responses .flat-map Bacon.later
-    @cooldown.sampled-by @responses .flat-map Bacon.later .on-value !~>
+    @cooldown.sampled-by @response-or-error .flat-map Bacon.later .on-value !~>
       set-timeout (~> @ready.push true), 0
 

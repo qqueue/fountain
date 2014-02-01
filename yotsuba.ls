@@ -181,7 +181,7 @@ reconcilable = (old, stub) ->
   #0 <= (stub.images  - old.images)  <= 5 and
   #aligned old, stub
 
-# CatalogThread, Thread -> Bool
+# Thread, CatalogThread -> Bool
 # whether the stub.last_replies correctly aligns with old.posts according
 # to the reply count difference.
 #
@@ -225,14 +225,69 @@ aligned = (old, stub) ->
       return false
   return true
 
+# Thread, CatalogThread -> [Post]
+# Correctly grafts last_replies onto the full posts array according to
+# the reply count.
 graft = (old, stub) ->
   expected-length = stub.replies + 1 # including op
   last_replies = stub.last_replies || []
   old-contrib = old.posts.slice(0, (expected-length - last_replies.length))
   return old-contrib ++ last_replies
 
-# {no: Thread}, Catalog -> (threads: {no: Thread}, stale: [thread-no])
-merge-catalog = (old-threads, catalog) ->
+# Thread, CatalogThread, Long(unix timestamp) -> Bool
+# Whether the stub returned from the catalog is out of sync from our
+# last known state and is missing posts.
+#
+# Apparently, `catalog.json` is served by some sort of round-robin DNS because
+# we frequently get threads which are missing tail replies that we saw from
+# a previous fetch (usually just one missing reply). Thus, we use a heuristic
+# to avoid wasting a fetch cycle on a thread just to find that nothing has
+# changed: if the apparently deleted post(s) are less than 10 seconds old, it's
+# very unlikely that they were legitimately deleted, thus we assume that they're
+# actually not deleted and continue on our merry way.
+regressed = (old, stub, now) ->
+  negative-diff = old.replies - stub.replies
+
+  # if we're missing posts and we can check for them in last_replies
+  if 0 < negative-diff <= 5
+    last_replies = stub.last_replies ? [] # 4chan nulls empty last_replies
+
+    should-be-aligned =
+      old.posts.slice 1
+        .slice -(negative-diff + last_replies.length)
+
+    should-be-present-in-stub =
+      should-be-aligned.slice 0 last_replies.length
+    apparently-deleted = should-be-aligned.slice -negative-diff
+
+    console.log """
+    should-be-aligned:         #{should-be-aligned.map (.no)}
+    should-be-present-in-stub: #{should-be-present-in-stub.map (.no)}
+    apparently-deleted:        #{apparently-deleted.map (.no)}
+    """.cyan
+
+    for post, i in should-be-present-in-stub
+      if post.no is not last_replies[i].no
+        console.log "misalignement, isn't regressed".cyan
+        return false
+
+    for post in apparently-deleted
+      if (now - post.time * 1000ms) > 10_000ms
+        console.log "time diff #{now - post.time}, isn't regressed".cyan
+        return false
+
+    # every apparently deleted post was 'deleted' in the last 10 seconds,
+    # so assume the catalog is just out of sync this time, i.e. regressed.
+    console.log "apparently regressed #{old.no}".cyan.bold
+    return true
+  else
+    # we're either not missing posts, or we're missing more posts than we
+    # can check for and we should therefore mark the thread as stale.
+    return false
+
+# {no: Thread}, Catalog, Long(unix timestamp) ->
+#   (threads: {no: Thread}, stale: [thread-no])
+merge-catalog = (old-threads, catalog, now) ->
   new-threads = {}
   stale = []
 
@@ -241,7 +296,10 @@ merge-catalog = (old-threads, catalog) ->
     thread-no = stub.no
 
     if (old = old-threads[thread-no])?
-      if reconcilable old, stub
+      if regressed old, stub, now
+        # use old thread, catalog is lying.
+        new-threads[thread-no] = old
+      else if reconcilable old, stub
 
         g = graft old, stub
 
@@ -388,7 +446,9 @@ module.exports = class Yotsuba
     # Property State
     @board = Bacon.update new State(init),
       [@catalog-responses] (old, {body: catalog}: res) ->
-        {threads: new-threads, stale} = merge-catalog old.threads, catalog
+        last-modified =  new Date res.headers[\last-modified]
+        {threads: new-threads, stale} =
+          merge-catalog old.threads, catalog, last-modified
         new State do
           diff: diff-threads old.threads, new-threads
           threads: new-threads
@@ -461,6 +521,7 @@ module.exports = class Yotsuba
 require! {assert, util}
 
 posts = (...nos) -> nos.map -> new Post {no: it}
+tposts = (...nos) -> nos.map -> new Post {no: it, time: 0}
 
 assert-aligned = (should, old-replies, nu-replies, old, last5) ->
   assert do
@@ -554,6 +615,7 @@ assert-deep-equal "merge-catalog no-op",
         {no: 0, last_replies: [], replies: 0, images: 0}
       ]
     ]
+    0
   {
     threads: { 0: new Thread {no: 0, replies: 0, images: 0}, [new Post {no: 0}] }
     stale: []
@@ -569,6 +631,7 @@ assert-deep-equal "merge-catalog new post",
         {no: 0, last_replies: [{no: 1}], replies: 1, images: 0}
       ]
     ]
+    0
   {
     threads: {
       0: new Thread do
@@ -586,6 +649,7 @@ assert-deep-equal "merge-catalog new thread",
         {no: 0, last_replies: [{no: 1}], replies: 1, images: 0}
       ]
     ]
+    0
   {
     threads: {
       0: new Thread do
@@ -603,6 +667,7 @@ assert-deep-equal "merge-catalog remove thread",
     [
       threads: []
     ]
+    0
   {
     threads: {}
     stale: []
@@ -625,6 +690,7 @@ assert-deep-equal "merge-catalog unreconcilable",
         }
       ]
     ]
+    0
   {
     threads: {
       0: new Thread do
@@ -648,11 +714,60 @@ assert-deep-equal "merge-catalog omitted_posts",
         }
       ]
     ]
+    0
   {
     threads: {
       0: new Thread {no: 0, replies: 7, images: 0}, posts 0 3 4 5 6 7
     }
     stale: [0] # expect needs a fetch
+  }
+
+assert-deep-equal "merge-catalog thread regression",
+  merge-catalog do
+    {
+      0: {
+        no: 0 replies: 9, images: 0
+        posts:
+          tposts(0 1 2 3 4 5 6 7 8) ++ [new Post {no: 9, time: 15_000}]
+      }
+    }
+    [
+      threads: [{no: 0 replies: 8, images: 0, last_replies: tposts 4 5 6 7 8}]
+    ]
+    20_000
+  {
+    threads: {
+      0: {
+        no: 0 replies: 9, images: 0
+        posts:
+          tposts(0 1 2 3 4 5 6 7 8) ++ [new Post {no: 9, time: 15_000}]
+      }
+    }
+    stale: [] # don't expect fetch
+  }
+
+assert-deep-equal "merge-catalog legitimate (old) deletion",
+  merge-catalog do
+    {
+      0: {
+        no: 0 replies: 9, images: 0
+        posts:
+          tposts(0 1 2 3 4 5 6 7 8) ++ [new Post {no: 9, time: 15}]
+      }
+    }
+    [
+      threads: [{no: 0 replies: 8, images: 0, last_replies: tposts 4 5 6 7 8}]
+    ]
+    100_000
+  {
+    threads: {
+      0: {
+        no: 0 replies: 9, images: 0
+        posts:
+          tposts(0 1 2 3 4 5 6 7 8) ++ [new Post {no: 9, time: 15}]
+      }
+    }
+    stale: [0] # expect a fetch
   }
 
 assert-deep-equal "diff-threads no-op",
@@ -707,5 +822,54 @@ assert-deep-equal "diff-threads attributes",
     [] [] [[{key: \sticky, left: true, right: false}]]
     [] [] []
 
+
+assert-deep-equal "regressed: no-op",
+  regressed do
+    {no: 0 replies: 5, images: 0, posts: tposts 0 1 2 3 4 5}
+    {no: 0 replies: 5, images: 0, last_replies: tposts 0 1 2 3 4 5}
+  false
+
+assert-deep-equal "regressed: missing 1 new reply",
+  regressed do
+    {
+      no: 0 replies: 1, images: 0
+      posts: [new Post {no: 1, time: 15_000}]
+    }
+    # 4chan omits empty last_replies
+    {no: 0 replies: 0, images: 0, last_replies: void}
+    20_000
+  true
+
+assert-deep-equal "regressed: missing 2 new replies",
+  regressed do
+    {
+      no: 0 replies: 1, images: 0
+      posts: [new Post {no: 1, time: 15_000}; new Post {no: 2, time: 16}]
+    }
+    {no: 0 replies: 0, images: 0, last_replies: []}
+    20_000
+  true
+
+assert-deep-equal "regressed: missing 1 new reply, with longer thread",
+  regressed do
+    {
+      no: 0 replies: 9, images: 0
+      posts:
+        tposts(0 1 2 3 4 5 6 7 8) ++ [new Post {no: 9, time: 15}]
+    }
+    {no: 0 replies: 8, images: 0, last_replies: tposts 4 5 6 7 8}
+    20_000
+  true
+
+assert-deep-equal "regressed: legitimate (old) tail deletion, not regressed",
+  regressed do
+    {
+      no: 0 replies: 9, images: 0
+      posts:
+        tposts(0 1 2 3 4 5 6 7 8) ++ [new Post {no: 9, time: 15}]
+    }
+    {no: 0 replies: 8, images: 0, last_replies: tposts 4 5 6 7 8}
+    100_000
+  false
 
 console.error "passed!".green.bold

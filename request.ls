@@ -1,13 +1,13 @@
 require! {
   Bacon: \baconjs
-  https
+  http
   zlib
 }
 
 options =
   host: \a.4cdn.org
   headers:
-    'User-Agent'      : 'Fountain/0.0.0'
+    'User-Agent'      : 'Fountain/0.1.0'
     'Accept-Encoding' : 'gzip, deflate'
     'Accept'          : 'application/json'
 
@@ -39,21 +39,35 @@ export
     req <<< options{host}
 
     Bacon.from-node-callback (cb) !->
-      r = https.get req
+      start = Date.now!
+      r = http.get req
+      console.log "request sent...".blue
+      r.set-timeout 8000ms
       r.on \error !->
+        console.log "request error...".blue
         cb it
       r.on \response (res) !->
+        res.set-timeout 16000ms
+        console.log "response received".blue
         err, data <- slurp decode-content res
+        console.log "slurped".blue
         if err?
+          console.log "slurp error!".blue
           cb err
         else
+          console.log "parsing body...".blue
           body = void
           if data? and data.length > 0
+            console.log "have nonempty body, trying...".blue
             try
               body = JSON.parse data
+              console.log "parsed body!".blue
             catch
+              console.log "couldn't parse body #e".blue
               cb e
               return
+
+          console.log "#{res.status-code} in #{Date.now! - start}ms".blue
 
           cb null, {
             body

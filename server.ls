@@ -14,9 +14,10 @@ text-content = ->
   return '' if not it?
   it.replace /<br>/g '\n' .replace /<[^>]+?>/g ''
     .replace /&gt;/g '>' .replace /&quot;/g '"'
-    .replace /&#039;/g \'
+    .replace /&#039;/g \' .replace /&lt;/g '<'
+    .replace /&amp;/g '&'
 
-y = new Yotsuba do
+export y = new Yotsuba do
   \a
 
   init = if fs.exists-sync \a.json
@@ -47,7 +48,7 @@ y = new Yotsuba do
       #throw err if err
       #
 
-l = new Limiter 1000ms request.get, (.status-code >= 500)
+export l = new Limiter 1000ms request.get, (.status-code >= 500)
 
 #y.responses.plug l.responses
 l.responses.on-value (res) !->
@@ -84,7 +85,10 @@ y.board.on-value !({diff}: board) ->
     console.log "#{diff.changed-posts.length} changed posts".red.bold
 
   console.log "#{threads.length} threads, \
-    #{_.sum threads.map (.posts.length)} posts".white.bold
+    #{_.sum threads.map (.posts.length)} posts, \
+    #{_.sum threads.map (.images)} images (
+    #{_.sum(threads.map -> _.sum it.posts.map (.fsize || 0)) / 1_000_000}Mb)
+    ".white.bold
 
   s = board.stale.length
   if s > 0
@@ -94,12 +98,12 @@ y.board.on-value !({diff}: board) ->
   if m > 0
     console.log "#m missing".red.bold
 
-  if diff.new-posts.length < 10
-    for it in diff.new-posts
-      console.log "================".grey
-      console.log "#{if it.resto is 0 then "OP " else ''}#{it.name} #{it.now}"
-      console.log "----------------".grey
-      console.log text-content it.com
+  for it in diff.new-posts
+    console.log "================".grey
+    console.log "#{if it.resto is 0 then "OP " else ''}#{it.name} #{it.now} \
+                 latency: #{Date.now! - it.time * 1000}ms"
+    console.log "----------------".grey
+    console.log text-content it.com
 
 #y.board.changes!on-value !({diff}) ->
   #for it in diff.new-posts
@@ -114,9 +118,15 @@ y.board.on-value !({diff}: board) ->
 l.ready.push true
 
 require("net")
-  .createServer (socket) ->
+  .createServer (socket) !->
     repl = require('repl')
-    repl.start("fountain> ", socket)
+    repl.start do
+      prompt: 'fountain> '
+      input: socket
+      output: socket
+      use-global: true
+      terminal: true
+    .on \exit !-> socket.end!
   .listen 5000, "localhost"
 
 Bacon.from-event-target process, \SIGINT .map y.board .on-value ->
