@@ -4,6 +4,8 @@ require! {
   colors
 }
 
+_no = (.no)
+
 # The implementations for reconciling changes from catalog/thread fetches
 # are factored to be more easily correct at the expense of garbage collection
 # and computation. Future refactorings can focus on efficiency once
@@ -207,20 +209,20 @@ aligned = (old, stub) ->
 
   if actual-overlap.length is not expected-overlap.length
     console.log "unreconcilable: #{stub.no}"
-    console.log "old      " old.posts.map (.no)
-    console.log "last5    " stub.last_replies.map (.no)
-    console.log "Expected " expected-overlap.map (.no)
-    console.log "Actual   " actual-overlap.map (.no)
+    console.log "old      " old.posts.map _no
+    console.log "last5    " stub.last_replies.map _no
+    console.log "Expected " expected-overlap.map _no
+    console.log "Actual   " actual-overlap.map _no
     console.log "old " old.replies, " new ", stub.replies
     return false
 
   for post, i in actual-overlap
     if post.no is not expected-overlap[i].no
       console.log "unreconcilable: #{stub.no}"
-      console.log "old      " old.posts.map (.no)
-      console.log "last5    " stub.last_replies.map (.no)
-      console.log "Expected " expected-overlap.map (.no)
-      console.log "Actual   " actual-overlap.map (.no)
+      console.log "old      " old.posts.map _no
+      console.log "last5    " stub.last_replies.map _no
+      console.log "Expected " expected-overlap.map _no
+      console.log "Actual   " actual-overlap.map _no
       console.log "old " old.replies, " new ", stub.replies
       return false
   return true
@@ -261,9 +263,9 @@ regressed = (old, stub, now) ->
     apparently-deleted = should-be-aligned.slice -negative-diff
 
     console.log """
-    should-be-aligned:         #{should-be-aligned.map (.no)}
-    should-be-present-in-stub: #{should-be-present-in-stub.map (.no)}
-    apparently-deleted:        #{apparently-deleted.map (.no)}
+    should-be-aligned:         #{should-be-aligned.map _no}
+    should-be-present-in-stub: #{should-be-present-in-stub.map _no}
+    apparently-deleted:        #{apparently-deleted.map _no}
     """.cyan
 
     for post, i in should-be-present-in-stub
@@ -306,13 +308,13 @@ merge-catalog = (old-threads, catalog, now) ->
         unless stub.replies + 1 == g.length
           console.log """
           mismatch!
-          expecting #{g.map (.no)}
+          expecting #{g.map _no}
           to be #{stub.replies + 1} long, is actually #{g.length}.
 
-          old: #{old.posts.map (.no)}
+          old: #{old.posts.map _no}
           old-replies: #{old.replies}
           new-replies: #{stub.replies}
-          new-last5: #{stub.last_replies.map (.no)}
+          new-last5: #{stub.last_replies.map _no}
           """.red.bold
 
         new-threads[thread-no] = new Thread do
@@ -322,16 +324,16 @@ merge-catalog = (old-threads, catalog, now) ->
 
         unless new-threads[thread-no].check!
           console.log """
-          expected last5: #{(stub.last_replies || []).map (.no)}
-          actual   last5: #{new-threads[thread-no].posts.slice(-5).map (.no)}
+          expected last5: #{(stub.last_replies || []).map _no}
+          actual   last5: #{new-threads[thread-no].posts.slice(-5).map _no}
           """.magenta.bold
       else
         console.log """
         I think #thread-no is stale because it had
         #{old.replies} replies and now it has #{stub.replies} replies
         #{old.images} images and now it has #{stub.images} images
-        old last5: #{old.posts.slice -5 .map (.no)}
-        new last5: #{(stub.last_replies || []).map (.no)}
+        old last5: #{old.posts.slice -5 .map _no}
+        new last5: #{(stub.last_replies || []).map _no}
         """.yellow.bold
 
         stale.push stub.no
@@ -395,6 +397,77 @@ class State
     for thread-no, thread of threads
       @threads[thread-no] = new Thread thread, thread.posts
 
+update-catalog = (old, {body: catalog}: res) ->
+  last-modified =  new Date res.headers[\last-modified]
+  {threads: new-threads, stale} =
+    merge-catalog old.threads, catalog, last-modified
+  new State do
+    diff: diff-threads old.threads, new-threads
+    threads: new-threads
+    last-modified: new Date res.headers[\last-modified]
+    stale: stale
+    last-poll: new Date
+    last-catalog-poll: new Date
+
+update-thread = (old, {body: thread}: res) ->
+  new-thread = Thread.from-api-thread thread
+  old-thread = old.threads[new-thread.no]
+  diff = diff-posts old-thread.posts, new-thread.posts
+
+  debug-thread new-thread, old-thread, diff
+
+  new-threads = replace new-thread.no, new-thread, old.threads
+
+  last-modified = new Date res.headers[\last-modified]
+  new State do
+    diff: diff
+    threads: new-threads
+    last-modified:
+      if old.last-modified > last-modified
+        # e.g. just fetching a stale thread
+        old.last-modified
+      else
+        last-modified
+    stale: old.stale.filter (is not new-thread.no)
+    last-poll: new Date
+    last-catalog-poll: old.last-catalog-poll
+
+update-thread-not-found = (old, res) ->
+  {thread-no} = res.req
+  new State do
+    diff: new Diff [], [thread-no], [], [], [], []
+    threads: with {...old.threads} then delete ..[thread-no]
+    last-modified: old.last-modified
+    stale: old.stale.filter (is not thread-no)
+    last-poll: new Date
+    last-catalog-poll: old.last-catalog-poll
+
+update-not-modified = (old) ->
+  new State do
+    diff: new Diff [], [], [], [], [], []
+    threads: old.threads
+    last-modified: old.last-modified
+    stale: old.stale
+    last-poll: new Date
+    last-catalog-poll: new Date
+
+next-request = (board-name, state) -->
+  # if there's a stale thread and the catalog is still fresh
+  thread = most-wanted-thread state
+  if thread? and Date.now! - state.last-catalog-poll < 10000ms
+    type: \thread
+    thread-no: thread.no
+    path: "/#board-name/res/#{thread.no}.json"
+  else
+    type: \catalog
+    path: "/#board-name/catalog.json"
+    headers:
+      \If-Modified-Since : new Date(state.last-modified)toUTCString!
+
+is-catalog = (.req.type is \catalog)
+is-thread = (.req.type is \thread)
+is-status = (status) -> (.status-code is status)
+
 # 4chan replicator through the JSON API
 #
 # @requests, @responses, and @ready attachment buses are suitable for use with
@@ -432,89 +505,30 @@ module.exports = class Yotsuba
     # when to push the next request on the requests stream.
     @ready = new Bacon.Bus
 
-    okay = @responses.filter (.status-code is 200)
+    okay = @responses.filter is-status 200
 
-    @catalog-responses = okay.filter (.req.type is \catalog)
-    @thread-responses  = okay.filter (.req.type is \thread)
+    @catalog-responses = okay.filter is-catalog
+    @thread-responses  = okay.filter is-thread
 
     @thread-responses-not-found = @responses
-      .filter (.status-code is 404)
-      .filter (.req.type is \thread)
+      .filter is-status 404
+      .filter is-thread
 
-    @responses-not-modified = @responses.filter (.status-code is 304)
+    @responses-not-modified = @responses.filter is-status 304
 
     # Property State
     @board = Bacon.update new State(init),
-      [@catalog-responses] (old, {body: catalog}: res) ->
-        last-modified =  new Date res.headers[\last-modified]
-        {threads: new-threads, stale} =
-          merge-catalog old.threads, catalog, last-modified
-        new State do
-          diff: diff-threads old.threads, new-threads
-          threads: new-threads
-          last-modified: new Date res.headers[\last-modified]
-          stale: stale
-          last-poll: new Date
-          last-catalog-poll: new Date
-      [@thread-responses] (old, {body: thread}: res) ->
-        new-thread = Thread.from-api-thread thread
-        old-thread = old.threads[new-thread.no]
-        diff = diff-posts old-thread.posts, new-thread.posts
-
-        debug-thread new-thread, old-thread, diff
-
-        new-threads = replace new-thread.no, new-thread, old.threads
-
-        last-modified = new Date res.headers[\last-modified]
-        new State do
-          diff: diff
-          threads: new-threads
-          last-modified:
-            if old.last-modified > last-modified
-              # e.g. just fetching a stale thread
-              old.last-modified
-            else
-              last-modified
-          stale: old.stale.filter (is not new-thread.no)
-          last-poll: new Date
-          last-catalog-poll: old.last-catalog-poll
-
-      [@thread-responses-not-found] (old, res) ->
-        {thread-no} = res.req
-        new State do
-          diff: new Diff [], [thread-no], [], [], [], []
-          threads: with {...old.threads} then delete ..[thread-no]
-          last-modified: old.last-modified
-          stale: old.stale.filter (is not thread-no)
-          last-poll: new Date
-          last-catalog-poll: old.last-catalog-poll
-
-      [@responses-not-modified] (old) ->
-        new State do
-          diff: new Diff [], [], [], [], [], []
-          threads: old.threads
-          last-modified: old.last-modified
-          stale: old.stale
-          last-poll: new Date
-          last-catalog-poll: new Date
+      [@catalog-responses] update-catalog
+      [@thread-responses] update-thread
+      [@thread-responses-not-found] update-thread-not-found
+      [@responses-not-modified] update-not-modified
 
     @changes = @board.changes!
 
     # Stream Request
     # This Stream should be plugged into a receiver such as the Limiter in order
     # to perform the actual requests.
-    @requests = @board.sampled-by @ready .map (state) ->
-      # if there's a stale thread and the catalog is still fresh
-      thread = most-wanted-thread state
-      if thread? and Date.now! - state.last-catalog-poll < 10000ms
-        type: \thread
-        thread-no: thread.no
-        path: "/#board-name/res/#{thread.no}.json"
-      else
-        type: \catalog
-        path: "/#board-name/catalog.json"
-        headers:
-          \If-Modified-Since : new Date(state.last-modified)toUTCString!
+    @requests = @board.sampled-by @ready .map next-request board-name
 
 # unit tests
 

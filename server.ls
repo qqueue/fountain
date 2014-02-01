@@ -19,9 +19,7 @@ text-content = ->
 
 export y = new Yotsuba do
   \a
-
-  init = if fs.exists-sync \a.json
-    JSON.parse fs.read-file-sync \a.json
+  if fs.exists-sync \a.json then JSON.parse fs.read-file-sync \a.json
 
 #if init?
   #posts = []
@@ -74,13 +72,16 @@ y.board.on-value !({diff}: board) ->
     t.replies - t.posts.length + 1
 
   if diff.new-threads.length > 0
-    console.log "#{diff.new-threads.length} new threads".blue.bold
+    console.log "#{diff.new-threads.length} new threads \
+                 #{diff.new-threads.map (.no)}".blue.bold
   if diff.new-posts.length > 0
-    console.log "#{diff.new-posts.length} new posts".blue
+    console.log "#{diff.new-posts.length} new posts".blue.bold
   if diff.deleted-threads.length > 0
-    console.log "#{diff.deleted-threads.length} deleted threads".red.bold
+    console.log "#{diff.deleted-threads.length} deleted threads: \
+                 #{diff.deleted-threads}".red.bold
   if diff.deleted-posts.length > 0
-    console.log "#{diff.deleted-posts.length} deleted posts".red.bold
+    console.log "#{diff.deleted-posts.length} deleted posts: \
+                 #{diff.deleted-posts.map (.no)}".red.bold
   if diff.changed-posts.length > 0
     console.log "#{diff.changed-posts.length} changed posts".red.bold
 
@@ -104,6 +105,11 @@ y.board.on-value !({diff}: board) ->
                  latency: #{Date.now! - it.time * 1000}ms"
     console.log "----------------".grey
     console.log text-content it.com
+  for it in diff.changed-posts
+    console.log "!!!!!!!!!!!!!!!!".red
+    console.log "#{if it.resto is 0 then "OP " else ''}#{it.name} #{it.now}"
+    console.log "----------------".red
+    console.log text-content it.red
 
 #y.board.changes!on-value !({diff}) ->
   #for it in diff.new-posts

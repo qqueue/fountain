@@ -13,7 +13,7 @@ error = {}
 module.exports = class Limiter
   (
     rate-limit      # Milliseconds
-    get             # Request -> Stream Response
+    get             # Request, cb(err, Response) -> ()
     is-error        # Response -> Boolean
   ) ->
     # Stream ()
@@ -33,7 +33,7 @@ module.exports = class Limiter
 
     # Stream Response
     # Clients can observe this directly.
-    @responses = @ready-requests.flat-map get
+    @responses = @ready-requests.flat-map -> Bacon.from-node-callback get, it
 
     @response-or-error = @responses.map-error ->
       console.log it
