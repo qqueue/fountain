@@ -347,6 +347,18 @@ merge-catalog = (old-threads, catalog, now) ->
         stale.push thread-no
       new-threads[thread-no] = Thread.from-catalog stub
 
+  for thread-no, old-thread of old-threads
+    unless new-threads[thread-no]?
+      # When 4chan prunes threads, we are also subject to the "regressions"
+      # experienced by replies i.e. a thread will be deleted, but come back
+      # from the next round-robined version of the catalog, as a zombie.
+      # Thus, instead of deleting threads from the catalog, we only mark the
+      # thread as stale so we can check the more canonical `thread.json` for
+      # a 404. This sort of wastes a thread pull, but it does prevent
+      # a zombie thread from showing up more throroughly.
+      stale.push thread-no
+      new-threads[thread-no] = old-thread
+
   return {threads: new-threads, stale}
 
 diff-threads = (old, nu) ->
@@ -359,8 +371,11 @@ diff-threads = (old, nu) ->
       if not old-thread.equals-attributes nu-thread
         diff.changed-threads.push do
           Thread.attribute-diff old-thread, nu-thread
-    else
-      diff.deleted-threads.push thread-no
+
+    # else, don't bother marking as deleted. merge-catalog will
+    # mark it as stale and the thread fetch should then 404, which will
+    # take care of it. See note in `merge-catalog`.
+    # diff.deleted-threads.push thread-no
 
   for thread-no, nu-thread of nu
     unless old[thread-no]?
@@ -683,8 +698,11 @@ assert-deep-equal "merge-catalog remove thread",
     ]
     0
   {
-    threads: {}
-    stale: []
+    threads: {
+      0: new Thread {no: 0, replies: 1, images: 0}, [new Post {no: 0}]
+    }
+    # expect thread to be marked for 404 check to avoid zombie threads
+    stale: ['0']
   }
 
 assert-deep-equal "merge-catalog unreconcilable",
@@ -805,7 +823,10 @@ assert-deep-equal "diff-threads delete",
     }
     {}
   new Diff do
-    [] ['0'] []
+    # XXX expect no deletion reported, due to merge-catalog's
+    # zombie-thread-prevention behavior. `merge-catalog` and `diff-threads`
+    # should be merged to remove this implicit coupling.
+    [] [] []
     [] [] []
 
 assert-deep-equal "diff-threads add post",
