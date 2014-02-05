@@ -2,7 +2,10 @@ require! {
   Bacon: \baconjs
   http
   zlib
+  lynx
 }
+
+stats = new lynx \localhost 8125 scope: \fountain
 
 options =
   host: \a.4cdn.org
@@ -33,31 +36,33 @@ function slurp node-stream, cb
   node-stream.on \end !-> cb void, buffer
   node-stream.on \error cb
 
-handle-response = (req, cb, res) -->
+handle-response = (req, start, cb, res) -->
   res.set-timeout 16000ms
-  console.log "response received".blue
+  #console.log "response received".blue
 
   err, data <- slurp decode-content res
 
-  console.log "slurped".blue
+  #console.log "slurped".blue
   if err?
-    console.log "slurp error!".blue
+    #console.log "slurp error!".blue
     cb err
   else
-    console.log "parsing body...".blue
+    #console.log "parsing body...".blue
     body = void
     if data? and data.length > 0
-      console.log "have nonempty body, trying...".blue
+      #console.log "have nonempty body, trying...".blue
       try
         body = JSON.parse data
-        console.log "parsed body!".blue
+        #console.log "parsed body!".blue
       catch
-        console.log "couldn't parse body #e".blue
+        #console.log "couldn't parse body #e".blue
         cb e
         return
 
-    console.log "#{res.status-code} in #{Date.now! - start}ms".blue
+    stats.timing 'response' (Date.now! - start)
+    #console.log "#{res.status-code} in #{Date.now! - start}ms".blue
 
+    stats.increment "response.#{res.status-code}"
     cb null, {
       body
       req
@@ -68,13 +73,12 @@ handle-response = (req, cb, res) -->
 export get = (req, cb) ->
   req.{}headers <<< options.headers
   req <<< options{host}
-
   start = Date.now!
 
   r = http.get req
 
-  console.log "request sent...".blue
+  #console.log "request sent...".blue
 
   r.set-timeout 8000ms
   r.on \error cb
-  r.on \response handle-response req, cb
+  r.on \response handle-response req, start, cb

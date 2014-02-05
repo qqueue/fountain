@@ -2,7 +2,12 @@ require! {
   Bacon: \baconjs
   _: \prelude-ls
   colors
+  lynx
 }
+
+#stats = new lynx \localhost 8125 scope: \fountain
+# XXX fake port to get tests to skip real data
+stats = new lynx \localhost 8126 scope: \fountain
 
 _no = (.no)
 
@@ -108,7 +113,7 @@ diff-posts = (old, nu) ->
   for post in nu
     if old-by-id[post.no]?
       unless that.equals post
-        changed.push post
+        changed.push [old-by-id[post.no], post]
       delete old-by-id[post.no]
     else
       added.push post
@@ -134,22 +139,26 @@ most-wanted-thread = (state) ->
       most = thread
       most-missing = missing
 
-  console.log m.sort((-)).join ' '
+  console.log m.sort((-)).join ' ' if m.length > 0
+  console.log state.stale.join ' ' if m.length > 0
 
   return most
 
 debug-thread = (nu, old, board-diff) ->
   diff = nu.posts.length - old.posts.length
   if diff > 0 and board-diff.new-posts.length is not diff
+    stats.increment 'new-posts-mismatch'
     console.error "expecting #diff more replies, got \
                    #{board-diff.new-posts.length}".yellow.bold
   if diff < 0 and board-diff.deleted-posts.length is not -diff
+    stats.increment 'deleted-posts-mismatch'
     console.error "expecting -#diff less replies, got \
                     #{board-diff.deleted-posts.length}".yellow.bold
 
   if board-diff.new-posts.length is 0
   and board-diff.changed-posts.length is 0
   and board-diff.deleted-posts.length is 0
+    stats.increment 'wasted-thread-poll'
     console.error """
       Wasted thread poll!
       length diff: old #{old.posts.length} cur #{nu.posts.length}
@@ -163,18 +172,22 @@ debug-thread = (nu, old, board-diff) ->
 # to re-fetch the thread page. Most changes should fall into this category.
 reconcilable = (old, stub) ->
   if old.replies is not (old.posts.length - 1)
+    stats.increment 'unreconcilable'
     console.log "stale: expecting #{old.replies} replies, got #{old.posts.length - 1}"
     return false
 
   unless 0 <= (stub.replies - old.replies) <= 5
     console.log "got #{stub.replies - old.replies} reply difference, unreconcilable"
+    stats.increment 'unreconcilable'
     return false
   unless 0 <= (stub.images - old.images) <= 5
     console.log "got #{stub.images - old.images} image difference, unreconcilable"
+    stats.increment 'unreconcilable'
     return false
 
   unless aligned old, stub
     console.log "apparently not aligned"
+    stats.increment 'unreconcilable'
     return false
 
   return true
@@ -271,27 +284,31 @@ regressed = (old, stub, now) ->
     for post, i in should-be-present-in-stub
       if post.no is not last_replies[i].no
         console.log "misalignement, isn't regressed".cyan
+        stats.increment 'misalignment'
         return false
 
     for post in apparently-deleted
       if (now - post.time * 1000ms) > 10_000ms
         console.log "time diff #{now - post.time}, isn't regressed".cyan
+        stats.increment 'misalignment'
         return false
 
     # every apparently deleted post was 'deleted' in the last 10 seconds,
     # so assume the catalog is just out of sync this time, i.e. regressed.
     console.log "apparently regressed #{old.no}".cyan.bold
+    stats.increment 'regression'
     return true
   else
     # we're either not missing posts, or we're missing more posts than we
     # can check for and we should therefore mark the thread as stale.
     return false
 
-# {no: Thread}, Catalog, Long(unix timestamp) ->
-#   (threads: {no: Thread}, stale: [thread-no])
-merge-catalog = (old-threads, catalog, now) ->
+# {no: Thread}, Catalog, Long(unix timestamp), old-tombstones->
+#   (threads: {no: Thread}, stale: [thread-no], tombstones: [])
+merge-catalog = (old-threads, catalog, now, old-tombstones) ->
   new-threads = {}
   stale = []
+  tombstones = {}
 
   # for each page's threads [{threads: []}, ...]
   for {threads} in catalog then for stub in threads
@@ -316,6 +333,7 @@ merge-catalog = (old-threads, catalog, now) ->
           new-replies: #{stub.replies}
           new-last5: #{stub.last_replies.map _no}
           """.red.bold
+          stats.increment 'mismatch'
 
         new-threads[thread-no] = new Thread do
           stub
@@ -327,6 +345,7 @@ merge-catalog = (old-threads, catalog, now) ->
           expected last5: #{(stub.last_replies || []).map _no}
           actual   last5: #{new-threads[thread-no].posts.slice(-5).map _no}
           """.magenta.bold
+          stats.increment 'check-fail'
       else
         console.log """
         I think #thread-no is stale because it had
@@ -340,26 +359,32 @@ merge-catalog = (old-threads, catalog, now) ->
         # we can't trust the new data, so use old thread.
         new-threads[thread-no] = old
     else
-      if stub.omitted_posts > 0
-        # we don't have all the posts, so we need to fetch the thread page.
-        console.log "I think #thread-no is new and it has #{stub.omitted_posts} \
-                     omitted_posts, so it's stale".yellow.bold
-        stale.push thread-no
-      new-threads[thread-no] = Thread.from-catalog stub
+      if old-tombstones[thread-no]?
+        console.log "Thread #thread-no came back from the dead!".yellow.bold
+        stats.increment 'zombie-thread'
+      else
+        if stub.omitted_posts > 0
+          # we don't have all the posts, so we need to fetch the thread page.
+          console.log "I think #thread-no is new and it has #{stub.omitted_posts} \
+                       omitted_posts, so it's stale".yellow.bold
+          stale.push thread-no
+        new-threads[thread-no] = Thread.from-catalog stub
 
   for thread-no, old-thread of old-threads
     unless new-threads[thread-no]?
-      # When 4chan prunes threads, we are also subject to the "regressions"
-      # experienced by replies i.e. a thread will be deleted, but come back
-      # from the next round-robined version of the catalog, as a zombie.
-      # Thus, instead of deleting threads from the catalog, we only mark the
-      # thread as stale so we can check the more canonical `thread.json` for
-      # a 404. This sort of wastes a thread pull, but it does prevent
-      # a zombie thread from showing up more throroughly.
-      stale.push thread-no
-      new-threads[thread-no] = old-thread
+      # if a thread is fairly new, prevent slightly-out-of-sync resposnes
+      # from killing the baby early.
+      if (now - old-thread.posts.0.time * 1000) < 30_000ms
+        stats.increment 'young-death'
+        console.log "Thread #thread-no died young, ignoring...".yellow.bold
+        new-threads[thread-no] = old-thread
+      else
+        # Make sure a dead threads stay dead even across slightly-out-of-sync
+        # responses from different load balancers remembering the thread's
+        # death for a while.
+        tombstones[thread-no] = now
 
-  return {threads: new-threads, stale}
+  return {threads: new-threads, stale, tombstones}
 
 diff-threads = (old, nu) ->
   diff = new Diff [], [], [], [], [], []
@@ -397,32 +422,91 @@ replace = (key, val, obj) ->
 
 class State
   ({
-    @diff # Diff
-    threads # {thread-no: thread}
+    @diff = new Diff [] [] [] [] [] []
+    threads ? {} # {thread-no: thread}
     # TODO record bump order, which is not derivable from threads otherwise.
     # we'll probably want a string-diff algorithm to generate
     # minimum-edit-distance mappings when bump order does change.
-    @last-modified # Date
+    @last-modified = new Date
     # threads which need a full thread page poll.
-    @stale # [thread-no]
-    @last-poll # Date
-    @last-catalog-poll # Date
+    @stale = []
+    @last-poll = new Date
+    @last-catalog-poll = new Date
+    @last-thread-poll = {} # {thread-no: unix-timestamp} , for sanity checks
+
+    # It takes a while before a delete from catalog.json is propagated
+    # to all load-balancers, so we sometimes get blips of zombie threads.
+    # To make sure these threads stay dead, keep track of their no for
+    # a while to prevent their reappearence.
+    @tombstones = {} # {thread-no: unix-timestamp}
   }) ->
     @threads = {}
     for thread-no, thread of threads
       @threads[thread-no] = new Thread thread, thread.posts
+      @last-thread-poll[thread-no] ?=
+        Date.now! + Math.floor(Math.random! * 60_000)
+
+# {thread-no: Thread}, {thread-no: unix-timestamp} ->
+#   {to-check: [Thread], new-thread-poll: {thread-no: unix-timestamp}
+#
+# just in case we're missing some class of updates from the catalog,
+# poll the actual thread page at a reduced rate to reconcile any differences.
+# TODO make sanity checks less frequent and probabalistic, e.g.
+# after 10 posts/deletions; a silent thread probably isn't changing.
+needs-sanity-check = (threads, last-thread-poll, now) ->
+  to-check = []
+  new-thread-poll = {}
+  for thread-no of threads
+    if last-thread-poll[thread-no]?
+      if (now - last-thread-poll[thread-no]) > 60_000ms
+        if Math.random! > 0.99
+          # need one
+          console.log "thread #thread-no needs sanity check".yellow.bold
+          stats.increment 'sanity-check'
+          to-check.push thread-no
+        else
+          new-thread-poll[thread-no] =
+            now + Math.floor(Math.random! * 60_000ms)
+      else
+        new-thread-poll[thread-no] = last-thread-poll[thread-no]
+    else
+      # we got a new thread in catalog, check later
+      new-thread-poll[thread-no] = now + Math.floor(Math.random! * 180_000ms)
+
+  return {to-check, new-thread-poll}
+
+uniq = (a1) ->
+  u = {}
+  for a in a1 then u[a] = true
+  Object.keys u
+
+filter-vals = (a, pred) -> with {}
+  for k, v of a
+    if pred v
+      ..[k] = v
+
+# 30s to wait for a thread to die should be good
+old-tombstone = (now, it) --> (now - it) < 30_000ms
 
 update-catalog = (old, {body: catalog}: res) ->
   last-modified =  new Date res.headers[\last-modified]
-  {threads: new-threads, stale} =
-    merge-catalog old.threads, catalog, last-modified
+  {threads: new-threads, stale, tombstones} =
+    merge-catalog old.threads, catalog, last-modified, old.tombstones
+
+  {to-check, new-thread-poll} =
+    needs-sanity-check new-threads, old.last-thread-poll, last-modified.get-time!
+
   new State do
     diff: diff-threads old.threads, new-threads
     threads: new-threads
-    last-modified: new Date res.headers[\last-modified]
-    stale: stale
+    last-modified: last-modified
+    stale: uniq(stale ++ to-check)
     last-poll: new Date
     last-catalog-poll: new Date
+    last-thread-poll: new-thread-poll
+    tombstones: filter-vals do
+      {...old.tombstones, ...tombstones}
+      old-tombstone last-modified
 
 update-thread = (old, {body: thread}: res) ->
   new-thread = Thread.from-api-thread thread
@@ -433,19 +517,17 @@ update-thread = (old, {body: thread}: res) ->
 
   new-threads = replace new-thread.no, new-thread, old.threads
 
-  last-modified = new Date res.headers[\last-modified]
   new State do
     diff: diff
     threads: new-threads
-    last-modified:
-      if old.last-modified > last-modified
-        # e.g. just fetching a stale thread
-        old.last-modified
-      else
-        last-modified
-    stale: old.stale.filter (is not new-thread.no)
+    last-modified: old.last-modified
+    stale: old.stale.filter (is not (''+new-thread.no))
     last-poll: new Date
     last-catalog-poll: old.last-catalog-poll
+    last-thread-poll:
+      with {...old.last-thread-poll} then ..[new-thread.no] =
+        Date.now! + Math.floor(Math.random! * 180_000ms)
+    tombstones: filter-vals old.tombstones, old-tombstone Date.now!
 
 update-thread-not-found = (old, res) ->
   {thread-no} = res.req
@@ -453,9 +535,13 @@ update-thread-not-found = (old, res) ->
     diff: new Diff [], [thread-no], [], [], [], []
     threads: with {...old.threads} then delete ..[thread-no]
     last-modified: old.last-modified
-    stale: old.stale.filter (is not thread-no)
+    stale: old.stale.filter (is not (''+thread-no))
     last-poll: new Date
     last-catalog-poll: old.last-catalog-poll
+    last-thread-poll: with {...old.last-thread-poll} then delete ..[thread-no]
+    tombstones: filter-vals do
+      {...old.tombstones, (thread-no): Date.now!}
+      old-tombstone Date.now!
 
 update-not-modified = (old) ->
   new State do
@@ -465,6 +551,8 @@ update-not-modified = (old) ->
     stale: old.stale
     last-poll: new Date
     last-catalog-poll: new Date
+    last-thread-poll: old.last-thread-poll
+    tombstones: filter-vals old.tombstones, old-tombstone Date.now!
 
 next-request = (board-name, state) -->
   # if there's a stale thread and the catalog is still fresh
@@ -505,6 +593,7 @@ module.exports = class Yotsuba
     init = {
       diff: new Diff [], [], [], [], [] ,[]
       threads: {}
+      last-thread-poll: {}
       last-modified: new Date
       stale: []
       last-poll: new Date 0
@@ -632,7 +721,8 @@ assert-deep-equal "diff-posts changed",
   diff-posts do
     [new Post {no: 1}]
     [new Post {no: 1, filedeleted: true}]
-  new Diff [] [] [] [] [] [new Post {no: 1, filedeleted: true}]
+  new Diff do
+    [] [] [] [] [] [[new Post {no: 1}; new Post {no: 1, filedeleted: true}]]
 
 assert-deep-equal "merge-catalog no-op",
   merge-catalog do
@@ -645,9 +735,11 @@ assert-deep-equal "merge-catalog no-op",
       ]
     ]
     0
+    {}
   {
     threads: { 0: new Thread {no: 0, replies: 0, images: 0}, [new Post {no: 0}] }
     stale: []
+    tombstones: {}
   }
 
 assert-deep-equal "merge-catalog new post",
@@ -661,6 +753,7 @@ assert-deep-equal "merge-catalog new post",
       ]
     ]
     0
+    {}
   {
     threads: {
       0: new Thread do
@@ -668,6 +761,7 @@ assert-deep-equal "merge-catalog new post",
         [new Post({no: 0}), new Post({no: 1})]
     }
     stale: []
+    tombstones: []
   }
 
 assert-deep-equal "merge-catalog new thread",
@@ -679,6 +773,7 @@ assert-deep-equal "merge-catalog new thread",
       ]
     ]
     0
+    {}
   {
     threads: {
       0: new Thread do
@@ -686,6 +781,7 @@ assert-deep-equal "merge-catalog new thread",
         [new Post({no: 0}), new Post({no: 1})]
     }
     stale: []
+    tombstones: []
   }
 
 assert-deep-equal "merge-catalog remove thread",
@@ -697,12 +793,11 @@ assert-deep-equal "merge-catalog remove thread",
       threads: []
     ]
     0
+    {}
   {
-    threads: {
-      0: new Thread {no: 0, replies: 1, images: 0}, [new Post {no: 0}]
-    }
-    # expect thread to be marked for 404 check to avoid zombie threads
-    stale: ['0']
+    threads: { }
+    stale: []
+    tombstones: {0: 0} # thread died just now
   }
 
 assert-deep-equal "merge-catalog unreconcilable",
@@ -723,6 +818,7 @@ assert-deep-equal "merge-catalog unreconcilable",
       ]
     ]
     0
+    {}
   {
     threads: {
       0: new Thread do
@@ -730,6 +826,7 @@ assert-deep-equal "merge-catalog unreconcilable",
         posts 0 1 2 3 4 5
     }
     stale: [0] # expect unreconcilable
+    tombstones: {}
   }
 
 assert-deep-equal "merge-catalog omitted_posts",
@@ -747,11 +844,13 @@ assert-deep-equal "merge-catalog omitted_posts",
       ]
     ]
     0
+    {}
   {
     threads: {
       0: new Thread {no: 0, replies: 7, images: 0}, posts 0 3 4 5 6 7
     }
     stale: [0] # expect needs a fetch
+    tombstones: {}
   }
 
 assert-deep-equal "merge-catalog thread regression",
@@ -767,6 +866,7 @@ assert-deep-equal "merge-catalog thread regression",
       threads: [{no: 0 replies: 8, images: 0, last_replies: tposts 4 5 6 7 8}]
     ]
     20_000
+    {}
   {
     threads: {
       0: {
@@ -776,6 +876,7 @@ assert-deep-equal "merge-catalog thread regression",
       }
     }
     stale: [] # don't expect fetch
+    tombstones: {}
   }
 
 assert-deep-equal "merge-catalog legitimate (old) deletion",
@@ -791,6 +892,7 @@ assert-deep-equal "merge-catalog legitimate (old) deletion",
       threads: [{no: 0 replies: 8, images: 0, last_replies: tposts 4 5 6 7 8}]
     ]
     100_000
+    {}
   {
     threads: {
       0: {
@@ -800,7 +902,10 @@ assert-deep-equal "merge-catalog legitimate (old) deletion",
       }
     }
     stale: [0] # expect a fetch
+    tombstones: {}
   }
+
+# TODO unit test early-death and tombstone ignore behavior
 
 assert-deep-equal "diff-threads no-op",
   diff-threads {} {}
@@ -908,3 +1013,5 @@ assert-deep-equal "regressed: legitimate (old) tail deletion, not regressed",
   false
 
 console.error "passed!".green.bold
+# now that tests pass, use real statsd
+stats = new lynx \localhost 8125 scope: \fountain

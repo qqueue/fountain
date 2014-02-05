@@ -8,7 +8,42 @@ require! {
   _: \prelude-ls
   #req: \request
   agent: \webkit-devtools-agent
+  lynx
+  memwatch
 }
+
+stats = new lynx \localhost 8125 scope: \fountain
+
+memwatch.on \leak !->
+  stats.increment 'leak'
+  console.log it
+
+# inc_gc/full_gc/compactions are all counting from 0
+# which is not as useful as a rate, so keep track of last seen
+last-inc-gc = 0
+last-full-gc = 0
+last-heap-compactions = 0
+
+memwatch.on \stats !->
+  stats.count "mem.inc_gc" diff if (diff = it.inc_gc - last-inc-gc) > 0
+  last-inc-gc := it.inc_gc
+
+  stats.count "mem.full_gc" diff if (diff = it.full_gc - last-full-gc) > 0
+  last-full-gc := it.full_gc
+
+  if (diff = it.heap_compactions - last-heap-compactions) > 0
+    stats.count "mem.heap_compactions" diff
+  last-heap-compactions := it.heap_compactions
+
+  # still not really sure what usage trend is, gauge anyway
+  stats.gauge "mem.usage_trend" it.usage_trend
+
+  stats.gauge "mem.current_base" it.current_base
+  stats.gauge "mem.min" it.min
+  stats.gauge "mem.max" it.max
+
+  for k, v of process.memory-usage! # rss, heapTotal, heapUsed
+    stats.gauge "mem.#k" v
 
 text-content = ->
   return '' if not it?
@@ -52,6 +87,9 @@ export l = new Limiter 1000ms request.get, (.status-code >= 500)
 l.responses.on-value (res) !->
   set-timeout (!-> y.responses.push res), 0
 
+l.responses.on-error !->
+  stats.increment 'responses.error'
+
 #l.requests.plug y.requests
 y.requests.on-value (req) !->
   set-timeout (!-> l.requests.push req), 0
@@ -60,7 +98,7 @@ y.requests.on-value (req) !->
 l.ready.on-value (ready) !->
   set-timeout (!-> y.ready.push ready), 0
 
-l.requests.on-value !-> console.log "requesting #{it.path}".green
+#l.requests.on-value !-> console.log "requesting #{it.path}".green
 l.responses.filter (.status-code is not 200)
   .on-value !-> console.log "response: #{it.status-code}".red.bold
 
@@ -72,44 +110,62 @@ y.board.on-value !({diff}: board) ->
     t.replies - t.posts.length + 1
 
   if diff.new-threads.length > 0
+    stats.count 'new-threads' diff.new-threads.length
     console.log "#{diff.new-threads.length} new threads \
                  #{diff.new-threads.map (.no)}".blue.bold
   if diff.new-posts.length > 0
+    stats.count 'new-posts' diff.new-posts.length
+    for size in diff.new-posts.filter (.fsize?) .map (.fsize)
+      stats.increment 'new-images'
+      stats.timing 'image-size' size
     console.log "#{diff.new-posts.length} new posts".blue.bold
   if diff.deleted-threads.length > 0
+    stats.count 'deleted-threads' diff.deleted-threads.length
     console.log "#{diff.deleted-threads.length} deleted threads: \
                  #{diff.deleted-threads}".red.bold
+  if diff.changed-threads.length > 0
+    stats.increment 'changed-threads'
+    console.log "#{diff.changed-threads.length} changed threads".red.bold
   if diff.deleted-posts.length > 0
+    stats.count 'deleted-posts' diff.deleted-posts.length
     console.log "#{diff.deleted-posts.length} deleted posts: \
                  #{diff.deleted-posts.map (.no)}".red.bold
   if diff.changed-posts.length > 0
+    stats.count 'changed-posts' diff.changed-posts.length
     console.log "#{diff.changed-posts.length} changed posts".red.bold
 
-  console.log "#{threads.length} threads, \
-    #{_.sum threads.map (.posts.length)} posts, \
-    #{_.sum threads.map (.images)} images (
-    #{_.sum(threads.map -> _.sum it.posts.map (.fsize || 0)) / 1_000_000}Mb)
-    ".white.bold
+  stats.gauge 'threads' threads.length
+  stats.gauge 'posts' _.sum threads.map (.posts.length)
+  stats.gauge 'images' _.sum threads.map (.images)
+  stats.gauge do
+    'image-size'
+    _.sum(threads.map -> _.sum it.posts.map (.fsize || 0)) / 1_000_000
+  #console.log "#{threads.length} threads, \
+    ##{_.sum threads.map (.posts.length)} posts, \
+    ##{_.sum threads.map (.images)} images (
+    ##{_.sum(threads.map -> _.sum it.posts.map (.fsize || 0)) / 1_000_000}Mb)
+    #".white.bold
 
   s = board.stale.length
   if s > 0
+    stats.gauge 'stale-threads' s
     console.log "#{board.stale.length} stale threads".red.bold
 
   m = _.sum missing
   if m > 0
+    stats.gauge 'missing-posts' m
     console.log "#m missing".red.bold
 
   for it in diff.new-posts
-    console.log "================".grey
-    console.log "#{if it.resto is 0 then "OP " else ''}#{it.name} #{it.now} \
-                 latency: #{Date.now! - it.time * 1000}ms"
-    console.log "----------------".grey
-    console.log text-content it.com
+    latency = Date.now! - it.time * 1000
+    stats.timing 'post-latency' latency
+    if latency > 60_000
+      console.log "================".red
+      console.log "latent: #latency".red
+      console.log "#{JSON.stringify it , , 3}".red
   for it in diff.changed-posts
     console.log "!!!!!!!!!!!!!!!!".red
-    console.log "#{if it.resto is 0 then "OP " else ''}#{it.name} #{it.now}"
-    console.log "----------------".red
-    console.log text-content it.red
+    console.log "#{JSON.stringify it , , 3}".red
 
 #y.board.changes!on-value !({diff}) ->
   #for it in diff.new-posts
