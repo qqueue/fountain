@@ -133,7 +133,6 @@ y.board.on-value !({diff}: board) ->
   if diff.changed-posts.length > 0
     stats.count 'changed-posts' diff.changed-posts.length
     console.log "#{diff.changed-posts.length} changed posts".red.bold
-
   stats.gauge 'threads' threads.length
   stats.gauge 'posts' _.sum threads.map (.posts.length)
   stats.gauge 'images' _.sum threads.map (.images)
@@ -190,6 +189,40 @@ require("net")
       terminal: true
     .on \exit !-> socket.end!
   .listen 5000, "localhost"
+
+do require \express
+  ..get \/stream (req, res) !->
+    req.socket.set-timeout Infinity
+
+    res.write-head 200,
+      'Content-Type': \text/event-stream
+      'Cache-Control': \no-cache
+      'Connection': \keep-alive
+      'Access-Control-Allow-Origin': '*'
+
+    # TODO keep track of changes to rewind last-event-id
+    res.write ':hi\n\n'
+
+    console.log "opened event-stream!".white.bold
+    close = Bacon.from-callback res, \on \close
+      ..on-value !-> console.log "closed event-stream!".white.bold
+    y.board.changes!take-until close .on-value !->
+      if it.diff.new-posts.length > 0
+        res.write "event: new-posts\n
+                   data: #{JSON.stringify it.diff.new-posts}\n\n"
+      if it.diff.deleted-posts.length > 0
+        res.write "event: deleted-posts\n
+                   data: #{JSON.stringify it.diff.deleted-posts}\n\n"
+      if it.diff.new-threads.length > 0
+        res.write "event: new-threads\n
+                   data: #{JSON.stringify it.diff.new-threads}\n\n"
+      if it.diff.deleted-threads.length > 0
+        res.write "event: deleted-threads\n
+                   data: #{JSON.stringify it.diff.deleted-threads}\n\n"
+
+    Bacon.interval 10_000ms .take-until close .on-value !->
+      res.write ":ping\n\n"
+  ..listen 3500
 
 Bacon.from-event-target process, \SIGINT .map y.board .on-value ->
   console.log "saving state..."

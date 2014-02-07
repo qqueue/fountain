@@ -8,5 +8,8 @@
     "jsdom": "0.8.11",
     "baconjs": "0.7.2",
     "colors": "0.6.2"
+  },
+  "scripts" : {
+    "phosphene": "node phosphene.js"
   }
 }

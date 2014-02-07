@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang=en>
+<meta charset=utf-8>
+<title>drinker</title>
+
+<style>
+  h1 {
+    font-size: 90%;
+    font-weight: normal;
+    color: black;
+    font-decoration: none;
+  }
+  .rightinfo {
+    float: right;
+  }
+  .name {
+    font-weight: bold;
+    color: #117743;
+  }
+  .trip {
+    color: #117743;
+  }
+  .thumb {
+    display: block;
+    float: left;
+    margin: 1em 20px;
+  }
+  .post,.footer {
+    padding: 0.25em 1em;
+    clear: both;
+  }
+  s {
+    text-decoration: none;
+    transition-duration: 1s;
+  }
+  s:not(:hover) > *, s:not(:hover) {
+    color: transparent !important;
+    text-shadow: 0 0 7px black;
+  }
+  .quote {
+    color: #789922;
+  }
+  body {
+    background: #EEF2FF;
+    font-family: sans-serif;
+    font-size: 10pt;
+  }
+  .post {
+    margin: 2px 0 4px 0;
+    background-color: #D6DAF0;
+    border-right: 1px solid #b7c5d9;
+    border-bottom: 1px solid #b7c5d9;
+    transition-property: background-color;
+    transition-duration: 3s;
+  }
+  .post.new {
+    background-color: #feffbf;
+  }
+
+</style>
+
+<div id=posts></div>
+
+<script src=client.js></script>
