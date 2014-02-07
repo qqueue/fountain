@@ -190,35 +190,58 @@ require("net")
     .on \exit !-> socket.end!
   .listen 5000, "localhost"
 
-do require \express
+stringify = ->
+  JSON.stringify it .replace /\n/g '\\n'
+
+require! express
+do express
+  # we have to make zlib flush synchronously or it'll buffer
+  # our event streams
+  ..use express.compress { flush: require \zlib .Z_SYNC_FLUSH }
   ..get \/stream (req, res) !->
+    console.log "got request to stream"
     req.socket.set-timeout Infinity
 
-    res.write-head 200,
-      'Content-Type': \text/event-stream
-      'Cache-Control': \no-cache
-      'Connection': \keep-alive
-      'Access-Control-Allow-Origin': '*'
+    # XXX if we implicitly set the headers as an object in
+    # write-head, then the compression middleware won't see
+    # our content type and will thus not compress our stream.
+    # Kind of annoying, since set-header is more verbose.
+    res.set-header 'Content-Type', \text/event-stream
+    res.set-header 'Transfer-Encoding', \identity
+    res.set-header 'Cache-Control', \no-cache
+    res.set-header 'Connection', \keep-alive
+    res.set-header 'Access-Control-Allow-Origin', '*'
+    res.write-head 200
 
     # TODO keep track of changes to rewind last-event-id
     res.write ':hi\n\n'
 
+    # send initial state over the wire
+    # TODO figure out how to do this nicely without pushing 8MB of state
+    # in one event.
+    if req.param \init
+      y.board.sampled-by Bacon.once! .on-value !->
+        res.write "event: init\n
+                   data: #{stringify it.threads}\n\n"
+
     console.log "opened event-stream!".white.bold
     close = Bacon.from-callback res, \on \close
       ..on-value !-> console.log "closed event-stream!".white.bold
-    y.board.changes!take-until close .on-value !->
+    err = Bacon.from-callback res, \on \error
+      ..on-value console.error
+    y.board.changes!take-until Bacon.merge-all(close, err) .on-value !->
       if it.diff.new-posts.length > 0
         res.write "event: new-posts\n
-                   data: #{JSON.stringify it.diff.new-posts}\n\n"
+                   data: #{stringify it.diff.new-posts}\n\n"
       if it.diff.deleted-posts.length > 0
         res.write "event: deleted-posts\n
-                   data: #{JSON.stringify it.diff.deleted-posts}\n\n"
+                   data: #{stringify it.diff.deleted-posts}\n\n"
       if it.diff.new-threads.length > 0
         res.write "event: new-threads\n
-                   data: #{JSON.stringify it.diff.new-threads}\n\n"
+                   data: #{stringify it.diff.new-threads}\n\n"
       if it.diff.deleted-threads.length > 0
         res.write "event: deleted-threads\n
-                   data: #{JSON.stringify it.diff.deleted-threads}\n\n"
+                   data: #{stringify it.diff.deleted-threads}\n\n"
 
     Bacon.interval 10_000ms .take-until close .on-value !->
       res.write ":ping\n\n"
