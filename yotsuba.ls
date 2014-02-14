@@ -218,7 +218,8 @@ aligned = (old, stub) ->
   count-diff = stub.replies - old.replies
 
   expected-overlap = (stub.last_replies || []).slice 0, -count-diff || 9e9
-  actual-overlap   = old.posts.slice 1 .slice -(5 - count-diff)
+  actual-overlap   =
+    old.posts.slice 1 .slice -((stub.last_replies?length || 0) - count-diff)
 
   if actual-overlap.length is not expected-overlap.length
     console.log "unreconcilable: #{stub.no}"
@@ -459,7 +460,7 @@ needs-sanity-check = (threads, last-thread-poll, now) ->
   for thread-no of threads
     if last-thread-poll[thread-no]?
       if (now - last-thread-poll[thread-no]) > 60_000ms
-        if Math.random! > 0.99
+        if Math.random! > 0.999
           # need one
           console.log "thread #thread-no needs sanity check".yellow.bold
           stats.increment 'sanity-check'
@@ -490,23 +491,30 @@ old-tombstone = (now, it) --> (now - it) < 30_000ms
 
 update-catalog = (old, {body: catalog}: res) ->
   last-modified =  new Date res.headers[\last-modified]
-  {threads: new-threads, stale, tombstones} =
-    merge-catalog old.threads, catalog, last-modified, old.tombstones
 
-  {to-check, new-thread-poll} =
-    needs-sanity-check new-threads, old.last-thread-poll, last-modified.get-time!
+  if old.last-modified > last-modified
+    console.log "catalog regressed \
+    #{old.last-modified.get-time! - last-modified.get-time!}ms!".yellow
+    stats.increment 'catalog-regression'
+    return old
+  else
+    {threads: new-threads, stale, tombstones} =
+      merge-catalog old.threads, catalog, last-modified, old.tombstones
 
-  new State do
-    diff: diff-threads old.threads, new-threads
-    threads: new-threads
-    last-modified: last-modified
-    stale: uniq(stale ++ to-check)
-    last-poll: new Date
-    last-catalog-poll: new Date
-    last-thread-poll: new-thread-poll
-    tombstones: filter-vals do
-      {...old.tombstones, ...tombstones}
-      old-tombstone last-modified
+    {to-check, new-thread-poll} =
+      needs-sanity-check new-threads, old.last-thread-poll, last-modified.get-time!
+
+    new State do
+      diff: diff-threads old.threads, new-threads
+      threads: new-threads
+      last-modified: last-modified
+      stale: uniq(stale ++ to-check)
+      last-poll: new Date
+      last-catalog-poll: new Date
+      last-thread-poll: new-thread-poll
+      tombstones: filter-vals do
+        {...old.tombstones, ...tombstones}
+        old-tombstone last-modified
 
 update-thread = (old, {body: thread}: res) ->
   new-thread = Thread.from-api-thread thread
