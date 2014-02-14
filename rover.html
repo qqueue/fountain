@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang=en>
 <meta charset=utf-8>
-<title>forest</title>
+<title>rover</title>
 
 <style>
   h1 {
@@ -53,19 +53,17 @@
     transition-property: background-color;
     transition-duration: 3s;
   }
-  .img {
-    display: block;
-  }
-  .thread {
-    display: block;
-    padding: 10px;
+  .post.new {
+    background-color: #feffbf;
   }
 
 </style>
 
-<div id=threads></div>
+<div><input type=text id=search></div>
+<div id=count></div>
+<div id=posts></div>
 
-<script src=masonry.pkgd.js></script>
+<script src=lunr.js></script>
 <script src=d3.v3.js></script>
 <script src=node_modules/baconjs/dist/Bacon.js></script>
-<script src=forest.js></script>
+<script src=rover.js></script>

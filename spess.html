@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang=en>
+<meta charset=utf-8>
+<title>spess</title>
+
+<style>
+  h1 {
+    font-size: 90%;
+    font-weight: normal;
+    color: black;
+  }
+  .rightinfo {
+    float: right;
+  }
+  .name {
+    font-weight: bold;
+    color: #117743;
+  }
+  .trip {
+    color: #117743;
+  }
+  .thumb {
+    display: block;
+    float: left;
+    margin: 1em 20px;
+  }
+  .post,.footer {
+    padding: 0.25em 1em;
+    clear: both;
+  }
+  s {
+    text-decoration: none;
+    transition-duration: 1s;
+  }
+  s:not(:hover) > *, s:not(:hover) {
+    color: transparent !important;
+    text-shadow: 0 0 7px black;
+  }
+  .quote {
+    color: #789922;
+  }
+  body {
+    background: radial-gradient(ellipse at center center, #000 0%, #002248 100%);
+    font-family: sans-serif;
+    font-size: 10pt;
+  }
+  .post {
+    background-color: rgba(214, 218, 240, 0.95);
+    margin: 3px 0;
+    overflow: hidden;
+    max-height: 500px;
+    transition: background-color 1s 3s, max-height 1s linear 0.5s;
+  }
+  * {
+-webkit-touch-callout: none;
+-webkit-user-select: none;
+-khtml-user-select: none;
+-moz-user-select: none;
+-ms-user-select: none;
+user-select: none;
+  }
+  .post.new {
+    background-color: rgba(254, 255, 191, 1.0);
+    max-height: 0px;
+  }
+  .post.dead {
+    transition: max-height 1s linear;
+    max-height: 0px;
+  }
+  #threads{
+    -moz-perspective: 800px;
+    -webkit-perspective: 800px;
+    perspective: 800px;
+    height: 100%;
+    width: 100%;
+    position: absolute;
+
+    -webkit-transform-style: preserve-3d;
+    -moz-transform-style: preserve-3d;
+    transform-style: preserve-3d;
+  }
+  .thread {
+    width: 400px;
+    position: absolute;
+    transition: transform 1s linear;
+  }
+  .thread.drag {
+    transition: transform 0s linear;
+  }
+  html{
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  body {
+    min-height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+  .quotelink {
+    color: #DD0000;
+  }
+  .no {
+    text-decoration: none;
+    color: black;
+  }
+</style>
+
+<div id=threads></div>
+
+<script src=node_modules/baconjs/dist/Bacon.js></script>
+<script src=d3.v3.js></script>
+<script src=spess.js></script>
