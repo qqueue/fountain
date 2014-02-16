@@ -491,12 +491,21 @@ old-tombstone = (now, it) --> (now - it) < 30_000ms
 
 update-catalog = (old, {body: catalog}: res) ->
   last-modified =  new Date res.headers[\last-modified]
+  console.log "Last Modified: #last-modified".yellow
 
   if old.last-modified > last-modified
     console.log "catalog regressed \
     #{old.last-modified.get-time! - last-modified.get-time!}ms!".yellow
     stats.increment 'catalog-regression'
-    return old
+    new State do
+      diff: new Diff [], [], [], [], [], []
+      threads: old.threads
+      last-modified: old.last-modified
+      stale: old.stale
+      last-poll: new Date
+      last-catalog-poll: new Date
+      last-thread-poll: old.last-thread-poll
+      tombstones: filter-vals old.tombstones, old-tombstone Date.now!
   else
     {threads: new-threads, stale, tombstones} =
       merge-catalog old.threads, catalog, last-modified, old.tombstones

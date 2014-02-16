@@ -81,7 +81,7 @@ export y = new Yotsuba do
       #throw err if err
       #
 
-export l = new Limiter 2000ms request.get, (.status-code >= 500)
+export l = new Limiter 1000ms request.get, (.status-code >= 500)
 
 #y.responses.plug l.responses
 l.responses.on-value (res) !->
@@ -103,7 +103,6 @@ l.responses.filter (.status-code is not 200)
   .on-value !-> console.log "response: #{it.status-code}".red.bold
 
 y.board.on-value !({diff}: board) ->
-  console.log "Last Modified: #{board.last-modified}"
   threads = _.values board.threads
   missing = board.stale.map ->
     t = board.threads[it]
