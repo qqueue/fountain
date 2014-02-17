@@ -55,31 +55,6 @@ export y = new Yotsuba do
   \a
   if fs.exists-sync \a.json then JSON.parse fs.read-file-sync \a.json
 
-#if init?
-  #posts = []
-
-  #for n, thread of init.threads
-    #posts.push ...thread.posts
-
-  #ops = []
-  #for posts
-    #ops.push JSON.stringify {
-      #index:
-        #_index: "yotsuba"
-        #_timestamp: ..time * 1000
-        #_type: \post
-        #_id: ..no
-        #_parent: if ..resto is not 0 then that
-    #}
-    #ops.push JSON.stringify ..
-
-  #req.put do
-    #url: "http://localhost:9200/yotsuba/_bulk"
-    #body: ops.join \\n
-    #(err, res, body) ->
-      #throw err if err
-      #
-
 export l = new Limiter 1000ms request.get, (.status-code >= 500)
 
 #y.responses.plug l.responses
@@ -164,16 +139,6 @@ y.board.on-value !({diff}: board) ->
   for it in diff.changed-posts
     console.log "!!!!!!!!!!!!!!!!".red
     console.log "#{JSON.stringify it , , 3}".red
-
-#y.board.changes!on-value !({diff}) ->
-  #for it in diff.new-posts
-    #req.put do
-      #url: "http://localhost:9200/yotsuba/post/#{it.no}
-            #?_parent=#{it.resto}&_timestamp=#{it.time * 1000}"
-      #json: it
-      #(err, res, body) ->
-        #console.log err if err
-        #console.log body if not (200 <= res.status-code <= 300)
 
 l.ready.push true
 
