@@ -11,6 +11,8 @@ require! {
   memwatch
 }
 
+const SAVE_FILE = \/tmp/org.hakase.fountain.json
+
 stats = new lynx \localhost 8125 scope: \fountain
 
 memwatch.on \leak !->
@@ -53,7 +55,7 @@ text-content = ->
 
 export y = new Yotsuba do
   \a
-  if fs.exists-sync \a.json then JSON.parse fs.read-file-sync \a.json
+  if fs.exists-sync SAVE_FILE then JSON.parse fs.read-file-sync SAVE_FILE
 
 export l = new Limiter 1000ms request.get, (.status-code >= 500)
 
@@ -210,8 +212,19 @@ do express
       res.write ":ping\n\n"
   ..listen 3500
 
+!function save-state state, cb
+  console.log "saving state to #SAVE_FILE..."
+  json = JSON.stringify(state, null, "  ")
+  fs.write-file SAVE_FILE, json, (err) ->
+    if err?
+      console.log "error saving state" err
+    else
+      console.log "state saved!"
+    cb?!
+
+Bacon.interval 30_000ms .map y.board .on-value !->
+  save-state it
+
 Bacon.from-event-target process, \SIGINT .map y.board .on-value ->
-  console.log "saving state..."
-  fs.write-file-sync \a.json JSON.stringify(it, null, "  ")
-  process.exit 0
+  save-state it, !-> process.exit 0
 
