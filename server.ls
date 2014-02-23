@@ -7,7 +7,6 @@ require! {
   colors
   _: \prelude-ls
   #req: \request
-  agent: \webkit-devtools-agent
   lynx
   memwatch
 }
