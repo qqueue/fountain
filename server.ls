@@ -11,7 +11,9 @@ require! {
   memwatch
 }
 
-const SAVE_FILE = \/tmp/org.hakase.fountain.json
+board = process.env.BOARD || 'a'
+
+const SAVE_FILE = "/tmp/org.hakase.fountain.#board.json"
 
 stats = new lynx \localhost 8125 scope: \fountain
 
@@ -54,7 +56,7 @@ text-content = ->
     .replace /&amp;/g '&'
 
 export y = new Yotsuba do
-  \a
+  board
   if fs.exists-sync SAVE_FILE
     try JSON.parse fs.read-file-sync SAVE_FILE
 
