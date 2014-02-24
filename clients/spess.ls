@@ -165,9 +165,9 @@ threads.on-value !(threads) ->
             ..attr \class \thumb
             ..attr \src ->
               if it.spoiler
-                '/spoiler-a1.png'
+                'http://localhost:3700/a/static/spoiler-a1.png'
               else
-                "http://localhost:3700/thumbs/#{it.no}/#{it.tim}s.jpg"
+                "http://localhost:3700/a/thumbs/#{it.no}/#{it.tim}s.jpg"
             ..attr \width -> if it.spoiler then 100 else it.tn_w
             ..attr \height -> if it.spoiler then 100 else it.tn_h
         ..append \p

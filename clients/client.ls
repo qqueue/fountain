@@ -66,11 +66,11 @@ new EventSource \http://localhost:3500/stream?catalog=true
               ..href = "http://localhost:3700/src/#{it.no}/#{it.tim}#{it.ext}"
               ..append-child <| with L \img
                 if it.spoiler
-                  ..src = '/spoiler-a1.png'
+                  ..src = 'http://localhost:3700/a/static/spoiler-a1.png'
                 else
                   ..width = it.tn_w
                   ..height = it.tn_h
-                  ..src = "http://localhost:3700/thumbs/#{it.no}/#{it.tim}s.jpg"
+                  ..src = "http://localhost:3700/a/thumbs/#{it.no}/#{it.tim}s.jpg"
           if it.com?
             ..append-child <| with L \p
               ..innerHTML = it.com
@@ -84,7 +84,7 @@ new EventSource \http://localhost:3500/stream?catalog=true
           ..append-child <| with L \img
             op = catalog[it.resto || it.no].posts.0
             if op?
-              ..src = "http://localhost:3700/thumbs/#{op.no}/#{op.tim}s.jpg"
+              ..src = "http://localhost:3700/a/thumbs/#{op.no}/#{op.tim}s.jpg"
               ratio = 100 / Math.max op.tn_w, op.tn_h
               ..width = op.tn_w * ratio
               ..height = op.tn_h * ratio
@@ -242,5 +242,3 @@ export relative-date = (date, relative-to = Date.now!) ->
   "#{Math.round number}#unit \
    (#{pad date.getHours!}:#{pad date.getMinutes!} \
    #{date.getDate!} #{MONTHS[date.getMonth!]} #{date.getFullYear! - 2000})"
-
-

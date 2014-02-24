@@ -87,9 +87,9 @@ threads.on-value !(threads) ->
         ..attr \class \img
         ..attr \src ->
           if it.posts.0.spoiler
-            '/spoiler-a1.png'
+            'http://localhost:3700/a/static/spoiler-a1.png'
           else
-            "http://localhost:3700/thumbs/#{it.posts.0.no}/#{it.posts.0.tim}s.jpg"
+            "http://localhost:3700/a/thumbs/#{it.posts.0.no}/#{it.posts.0.tim}s.jpg"
     ..each !->
       scale = Math.max 0.15, Math.sqrt posts-last-hr(it) / max
       if it.posts.0.spoiler
