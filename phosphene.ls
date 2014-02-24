@@ -7,9 +7,9 @@ express!
 
     res.header 'expires' new Date(Date.now! + 60_000).toUTCString!
     request.get do
-      url: "http://thumbs.4chan.org/a/thumb/#file"
+      url: "http://thumbs.4chan.org/#board/thumb/#file"
       headers:
-        \Referer : "http://boards.4chan.org/a/res/#tno"
+        \Referer : "http://boards.4chan.org/#board/res/#tno"
         \User-Agent : 'Phosphene/0.0.0'
     .pipe res
     .on \error !-> res.send 502
