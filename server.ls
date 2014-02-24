@@ -169,7 +169,7 @@ do express
   # we have to make zlib flush synchronously or it'll buffer
   # our event streams
   ..use express.compress { flush: require \zlib .Z_SYNC_FLUSH }
-  ..get \/json (req, res) !->
+  ..get "/v1/#board/json" (req, res) !->
     req.socket.set-timeout 30_000
 
     res.set-header 'Content-Type', \application/json+stream
@@ -191,7 +191,7 @@ do express
     Bacon.interval 10_000ms .take-until Bacon.merge-all(close, err) .on-value !->
       res.write "\n"
 
-  ..get \/stream (req, res) !->
+  ..get "/v1/#board/stream" (req, res) !->
     console.log "got request to stream"
     req.socket.set-timeout 30_000
 
@@ -251,13 +251,13 @@ do express
   ..listen process.env.PORT || 3500
 
 !function save-state state, cb
-  console.log "saving state to #SAVE_FILE..."
+  console.error "saving state to #SAVE_FILE..."
   json = JSON.stringify(state, null, "  ")
   fs.write-file SAVE_FILE, json, (err) ->
     if err?
-      console.log "error saving state" err
+      console.error "error saving state" err
     else
-      console.log "state saved!"
+      console.error "state saved!"
     cb?!
 
 Bacon.interval 30_000ms .map y.board .on-value !->

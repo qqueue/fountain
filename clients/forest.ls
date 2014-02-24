@@ -1,12 +1,13 @@
 $ = document~get-element-by-id
 L = document~create-element
 
+BOARD = (location.hash ||= \#a).substring 1
 div = $ \threads
 masonry = new Masonry div,
   column-width: 30px
   item-selector: \.thread
 
-es = new EventSource \http://localhost:3500/stream?init=true
+es = new EventSource "http://localhost:3500/v1/#BOARD/stream?init=true"
 new-posts = Bacon.from-event-target es, \new-posts
 
 threads = Bacon.update {},
@@ -74,7 +75,7 @@ threads.on-value !(threads) ->
       ..classed \thread false
       ..transition!duration 3000ms .style \opacity 0 .remove!
     ..enter!append \a
-      ..attr \href -> "http://boards.4chan.org/a/res/#{it.no}"
+      ..attr \href -> "http://boards.4chan.org/#BOARD/res/#{it.no}"
       ..attr \target \_blank
       ..attr \title ->
         "#{if it.posts.0.sub then that + "\n\n" else ''}
@@ -87,9 +88,9 @@ threads.on-value !(threads) ->
         ..attr \class \img
         ..attr \src ->
           if it.posts.0.spoiler
-            'http://localhost:3700/a/static/spoiler-a1.png'
+            "http://localhost:3700/#BOARD/static/spoiler-a1.png"
           else
-            "http://localhost:3700/a/thumbs/#{it.posts.0.no}/#{it.posts.0.tim}s.jpg"
+            "http://localhost:3700/#BOARD/thumbs/#{it.posts.0.no}/#{it.posts.0.tim}s.jpg"
     ..each !->
       scale = Math.max 0.15, Math.sqrt posts-last-hr(it) / max
       if it.posts.0.spoiler

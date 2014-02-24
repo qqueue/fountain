@@ -1,9 +1,11 @@
 $ = document~get-element-by-id
 L = document~create-element
 
+BOARD = (location.hash ||= \#a).substring 1
+
 div = $ \threads
 
-es = new EventSource \http://localhost:3500/stream
+es = new EventSource "http://localhost:3500/v1/#BOARD/stream"
 new-post = Bacon.from-event-target es, \new-posts
   .map (.data) >> JSON~parse
   .flat-map ->
@@ -155,7 +157,7 @@ threads.on-value !(threads) ->
               ..attr \class \no
               ..attr \target \_blank
               ..attr \href ->
-                "http://boards.4chan.org/a/res/
+                "http://boards.4chan.org/#BOARD/res/
                 #{if it.resto then "#that\#p" else ''}#{it.no}"
               ..text (.no)
         ..filter (.filename?)
@@ -165,9 +167,9 @@ threads.on-value !(threads) ->
             ..attr \class \thumb
             ..attr \src ->
               if it.spoiler
-                'http://localhost:3700/a/static/spoiler-a1.png'
+                "http://localhost:3700/#BOARD/static/spoiler-a1.png"
               else
-                "http://localhost:3700/a/thumbs/#{it.no}/#{it.tim}s.jpg"
+                "http://localhost:3700/#BOARD/thumbs/#{it.no}/#{it.tim}s.jpg"
             ..attr \width -> if it.spoiler then 100 else it.tn_w
             ..attr \height -> if it.spoiler then 100 else it.tn_h
         ..append \p
@@ -175,7 +177,7 @@ threads.on-value !(threads) ->
           ..each !->
             for @query-selector-all \.quotelink
               ..target = \_blank
-              ..href = "https://boards.4chan.org/a/res/#{..get-attribute \href}"
+              ..href = "https://boards.4chan.org/#BOARD/res/#{..get-attribute \href}"
         ..append \div
           ..attr \class \footer
         ..each !->

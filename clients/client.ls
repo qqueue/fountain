@@ -1,6 +1,8 @@
 $ = document~get-element-by-id
 L = document~create-element
 
+BOARD = (location.hash ||= \#a).substring 1
+
 div = $ \posts
 
 catalog = {}
@@ -8,7 +10,7 @@ catalog = {}
 function hsl i
   "hsl(#{i % 360}, 100%, #{(i % 35) + 65}%)"
 
-new EventSource \http://localhost:3500/stream?catalog=true
+new EventSource "http://localhost:3500/v1/#BOARD/stream?catalog=true"
   ..add-event-listener \catalog !->
     console.log "got catalog!"
     catalog := JSON.parse it.data
@@ -51,7 +53,7 @@ new EventSource \http://localhost:3500/stream?catalog=true
                 ..append-child <| with L \a
                   ..target = \_blank
                   ..href =
-                    "http://boards.4chan.org/a/res/
+                    "http://boards.4chan.org/#BOARD/res/
                     #{if it.resto then "#that\#p" else ''}#{it.no}"
                   ..text-content =
                     " #{if it.resto then "#that\#p" else ''}#{it.no}"
@@ -63,20 +65,20 @@ new EventSource \http://localhost:3500/stream?catalog=true
             ..append-child <| with L \a
               ..class-list.add \thumb
               ..target = \_blank
-              ..href = "http://localhost:3700/src/#{it.no}/#{it.tim}#{it.ext}"
+              ..href = "http://localhost:3700/#BOARD/src/#{it.no}/#{it.tim}#{it.ext}"
               ..append-child <| with L \img
                 if it.spoiler
-                  ..src = 'http://localhost:3700/a/static/spoiler-a1.png'
+                  ..src = "http://localhost:3700/#BOARD/static/spoiler-a1.png"
                 else
                   ..width = it.tn_w
                   ..height = it.tn_h
-                  ..src = "http://localhost:3700/a/thumbs/#{it.no}/#{it.tim}s.jpg"
+                  ..src = "http://localhost:3700/#BOARD/thumbs/#{it.no}/#{it.tim}s.jpg"
           if it.com?
             ..append-child <| with L \p
               ..innerHTML = it.com
               for ..query-selector-all \.quotelink
                 ..target = \_blank
-                ..href = "https://boards.4chan.org/a/res/#{..get-attribute \href}"
+                ..href = "https://boards.4chan.org/#BOARD/res/#{..get-attribute \href}"
           ..append-child <| with L \div
             ..class-list.add \footer
         ..append-child <| with L \div
@@ -84,7 +86,7 @@ new EventSource \http://localhost:3500/stream?catalog=true
           ..append-child <| with L \img
             op = catalog[it.resto || it.no].posts.0
             if op?
-              ..src = "http://localhost:3700/a/thumbs/#{op.no}/#{op.tim}s.jpg"
+              ..src = "http://localhost:3700/#BOARD/thumbs/#{op.no}/#{op.tim}s.jpg"
               ratio = 100 / Math.max op.tn_w, op.tn_h
               ..width = op.tn_w * ratio
               ..height = op.tn_h * ratio

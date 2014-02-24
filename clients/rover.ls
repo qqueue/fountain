@@ -1,7 +1,9 @@
 $ = document~get-element-by-id
 L = document~create-element
 
-es = new EventSource \http://localhost:3500/stream?init=true
+BOARD = (location.hash ||= \#a).substring 1
+
+es = new EventSource "http://localhost:3500/v1/#BOARD/stream?init=true"
 new-posts = Bacon.from-event-target es, \new-posts
 
 indexer = new Worker \indexer.js
@@ -129,7 +131,7 @@ matching-posts.on-value !->
             ..attr \class \no
             ..attr \target \_blank
             ..attr \href ->
-              "http://boards.4chan.org/a/res/
+              "http://boards.4chan.org/#BOARD/res/
               #{if it.resto then "#that\#p" else ''}#{it.no}"
             ..text (.no)
       ..filter (.filename?)
@@ -139,9 +141,9 @@ matching-posts.on-value !->
           ..attr \class \thumb
           ..attr \src ->
             if it.spoiler
-              'http://localhost:3700/a/static/spoiler-a1.png'
+              "http://localhost:3700/#BOARD/static/spoiler-a1.png"
             else
-              "http://localhost:3700/a/thumbs/#{it.no}/#{it.tim}s.jpg"
+              "http://localhost:3700/#BOARD/thumbs/#{it.no}/#{it.tim}s.jpg"
           ..attr \width -> if it.spoiler then 100 else it.tn_w
           ..attr \height -> if it.spoiler then 100 else it.tn_h
       ..append \p
@@ -149,7 +151,7 @@ matching-posts.on-value !->
         ..each !->
           for @query-selector-all \.quotelink
             ..target = \_blank
-            ..href = "https://boards.4chan.org/a/res/#{..get-attribute \href}"
+            ..href = "https://boards.4chan.org/#BOARD/res/#{..get-attribute \href}"
       ..append \div
         ..attr \class \footer
 

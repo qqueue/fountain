@@ -3,7 +3,7 @@ L = document~create-element
 
 div = $ \threads
 
-es = new EventSource \http://localhost:3500/stream?init=true
+es = new EventSource \http://localhost:3500/v1/a/stream?init=true
 init = Bacon.from-event-target es, \init
 
 svg = d3.select \#svg

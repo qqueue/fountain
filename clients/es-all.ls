@@ -12,7 +12,7 @@ text-content = ->
     ..innerHTML = (it || '')replace /<br>/g '\n'
   return div.textContent
 
-{threads} = require \/tmp/org.hakase.fountain.json
+{threads} = require \/tmp/org.hakase.fountain.a.json
 reqs = []
 for tno, thread of threads
   for post in thread.posts

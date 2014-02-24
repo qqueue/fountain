@@ -11,7 +11,7 @@ text-content = ->
     ..innerHTML = (it || '')replace /<br>/g '\n'
   return div.textContent
 
-es = new EventSource \http://localhost:3500/stream
+es = new EventSource \http://localhost:3500/v1/a/stream
   ..add-event-listener \error !->
       console.error "error" it
   ..add-event-listener \new-posts !->
