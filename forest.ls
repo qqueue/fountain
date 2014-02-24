@@ -91,7 +91,7 @@ threads.on-value !(threads) ->
           else
             "http://localhost:3700/thumbs/#{it.posts.0.no}/#{it.posts.0.tim}s.jpg"
     ..each !->
-      scale = Math.max 0.25, Math.sqrt posts-last-hr(it) / max
+      scale = Math.max 0.15, Math.sqrt posts-last-hr(it) / max
       if it.posts.0.spoiler
         @first-element-child
           ..width = 100 * scale
