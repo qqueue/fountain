@@ -55,7 +55,8 @@ text-content = ->
 
 export y = new Yotsuba do
   \a
-  if fs.exists-sync SAVE_FILE then JSON.parse fs.read-file-sync SAVE_FILE
+  if fs.exists-sync SAVE_FILE
+    try JSON.parse fs.read-file-sync SAVE_FILE
 
 export l = new Limiter 1000ms request.get, (.status-code >= 500)
 
@@ -79,6 +80,9 @@ l.responses.filter (.status-code is not 200)
   .on-value !-> console.log "response: #{it.status-code}".red.bold
 
 y.board.on-value !({diff}: board) ->
+  if board.stale.length > 3
+    console.log "board too stale (#{board.stale.length}), not logging".yellow
+    return
   threads = _.values board.threads
   missing = board.stale.map ->
     t = board.threads[it]
@@ -257,6 +261,8 @@ do express
 Bacon.interval 30_000ms .map y.board .on-value !->
   save-state it
 
-Bacon.from-event-target process, \SIGINT .map y.board .on-value ->
-  save-state it, !-> process.exit 0
-
+Bacon.from-event-target process, \SIGINT
+  .merge Bacon.from-event-target process, \SIGPIPE
+  .map y.board .on-value !->
+    console.error "caught SIGINT/SIGPIPE, saving..."
+    save-state it, !-> process.exit 0
