@@ -160,6 +160,9 @@ do express
   # our event streams
   ..use express.compress { flush: require \zlib .Z_SYNC_FLUSH }
   ..get "/v1/#board/json" (req, res) !->
+    unless req.accepts 'application/json'
+      return res.send 406
+
     req.socket.set-timeout 30_000
 
     res.set-header 'Content-Type', \application/json+stream
@@ -182,6 +185,9 @@ do express
       res.write "\n"
 
   ..get "/v1/#board/stream" (req, res) !->
+    unless req.accepts 'text/event-stream'
+      return res.send 406
+
     console.log "got request to stream"
     req.socket.set-timeout 30_000
 
