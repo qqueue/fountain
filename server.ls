@@ -163,9 +163,31 @@ do express
   # we have to make zlib flush synchronously or it'll buffer
   # our event streams
   ..use express.compress { flush: require \zlib .Z_SYNC_FLUSH }
+  ..get \/json (req, res) !->
+    req.socket.set-timeout 30_000
+
+    res.set-header 'Content-Type', \application/json+stream
+    res.set-header 'Transfer-Encoding', \identity
+    res.set-header 'Cache-Control', \no-cache
+    res.set-header 'Connection', \keep-alive
+    res.write-head 200
+
+    console.log "opened json stream!".white.bold
+    close = Bacon.from-callback res, \on \close
+      ..on-value !-> console.log "closed json stream!".white.bold
+    err = Bacon.from-callback res, \on \error
+      ..on-value console.error
+    y.board.changes!take-until Bacon.merge-all(close, err) .on-value !->
+      if it.diff.new-posts.length > 0
+        p = it.diff.new-posts.sort (a, b) -> a.no - b.no
+        res.write "#{p.map stringify .join '\n'}\n"
+
+    Bacon.interval 10_000ms .take-until Bacon.merge-all(close, err) .on-value !->
+      res.write "\n"
+
   ..get \/stream (req, res) !->
     console.log "got request to stream"
-    req.socket.set-timeout Infinity
+    req.socket.set-timeout 30_000
 
     # XXX if we implicitly set the headers as an object in
     # write-head, then the compression middleware won't see
@@ -208,7 +230,7 @@ do express
         res.write "event: deleted-threads\n
                    data: #{stringify it.diff.deleted-threads}\n\n"
 
-    Bacon.interval 10_000ms .take-until close .on-value !->
+    Bacon.interval 10_000ms .take-until Bacon.merge-all(close, err) .on-value !->
       res.write ":ping\n\n"
   ..listen 3500
 
