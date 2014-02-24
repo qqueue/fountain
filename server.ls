@@ -211,6 +211,16 @@ do express
         res.write "event: init\n
                    data: #{stringify it.threads}\n\n"
 
+    # send reduced initial state, i.e. OP + info for every thread
+    if req.param \catalog
+      y.board.sampled-by Bacon.once! .on-value !->
+        cat = {}
+        for tno, thread of it.threads
+          cat[tno] = with {...thread}
+            ..posts = thread.posts.slice 0 1
+        res.write "event: catalog\n
+                   data: #{stringify cat}\n\n"
+
     console.log "opened event-stream!".white.bold
     close = Bacon.from-callback res, \on \close
       ..on-value !-> console.log "closed event-stream!".white.bold

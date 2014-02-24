@@ -3,15 +3,29 @@ L = document~create-element
 
 div = $ \posts
 
-new EventSource \http://localhost:3500/stream
+catalog = {}
+
+function hsl i
+  "hsl(#{i % 360}, 100%, #{(i % 35) + 65}%)"
+
+new EventSource \http://localhost:3500/stream?catalog=true
+  ..add-event-listener \catalog !->
+    console.log "got catalog!"
+    catalog := JSON.parse it.data
+  ..add-event-listener \deleted-threads !->
+    for tno in JSON.parse it.data
+      delete tcolor[tno]
+      delete catalog[tno]
   ..add-event-listener \new-posts !->
-      #last-pos = window.scrollY
-      scroll = (window.scrollMaxY - window.scrollY) < 30
-      if window.scrollMaxY - window.scrollY
-        # prevent browser scrolling
-        window.scroll-by 0, -1
-      JSON.parse it.data .sort((a, b) -> a.no - b.no).for-each !->
-        div.append-child <| with L \div
+    console.log "got posts!"
+    if it.resto is 0
+      catalog[it.no] = {posts: [it]}
+    scroll = (window.scrollMaxY - window.scrollY) < 50
+    frag = document.create-document-fragment!
+    JSON.parse it.data .sort((a, b) -> a.no - b.no).for-each !->
+      frag.append-child <| with L \div
+        ..class-list.add \post-container
+        ..append-child <| with L \div
           ..class-list.add \post
           ..class-list.add \new
           ..append-child <| with L \h1
@@ -44,7 +58,8 @@ new EventSource \http://localhost:3500/stream
           if it.filename?
             ..append-child <| with L \div
               ..class-list.add \fileinfo
-              ..text-content = it.filename + it.ext + " #{it.w}x#{it.h} #{it.fsize}B"
+              ..text-content = it.filename + it.ext + " #{it.w}x#{it.h} \
+                               #{humanized it.fsize}"
             ..append-child <| with L \a
               ..class-list.add \thumb
               ..target = \_blank
@@ -64,22 +79,28 @@ new EventSource \http://localhost:3500/stream
                 ..href = "https://boards.4chan.org/a/res/#{..get-attribute \href}"
           ..append-child <| with L \div
             ..class-list.add \footer
-      #window.scroll-to window.scrollX, last-pos
-      old-height = window.scrollMaxY
-      while div.child-element-count > 50
-        div.remove-child div.first-element-child
-      window.scroll-by 0, -(old-height - window.scrollMaxY)
-      if scroll
-        set-timeout do
-          function scroll
-            diff = window.scrollMaxY - window.scrollY
-            if diff > 1
-              window.scroll-by 0, Math.ceil diff / 20
-              set-timeout scroll, 17ms
-          17ms
-      defer 100ms !->
-        for document.query-selector-all \.new
-          ..class-list.remove \new
+        ..append-child <| with L \div
+          ..class-list.add \thread-img
+          ..append-child <| with L \img
+            op = catalog[it.resto || it.no].posts.0
+            if op?
+              ..src = "http://localhost:3700/thumbs/#{op.no}/#{op.tim}s.jpg"
+              ratio = 100 / Math.max op.tn_w, op.tn_h
+              ..width = op.tn_w * ratio
+              ..height = op.tn_h * ratio
+    div.append-child frag
+    window.scroll-to window.scrollX, window.scrollMaxY if scroll
+    defer 100ms !->
+      for document.query-selector-all \.new
+        ..class-list.remove \new
+
+function humanized bytes
+  if bytes < 1024
+    "#bytes B"
+  else if (kbytes = Math.round bytes / 1024) < 1024
+    "#kbytes KB"
+  else
+    "#{(kbytes / 1024)toString!substring 0 3} MB"
 
 const YEAR   = 3.156e10_ms , HALFYEAR   = YEAR   / 2
       MONTH  = 2.62974e9_ms, HALFMONTH  = MONTH  / 2

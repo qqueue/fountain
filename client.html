@@ -8,7 +8,7 @@
     font-size: 90%;
     font-weight: normal;
     color: black;
-    font-decoration: none;
+    text-decoration: none;
   }
   .rightinfo {
     float: right;
@@ -40,23 +40,38 @@
   .quote {
     color: #789922;
   }
+  .quotelink {
+    color: #DD0000;
+  }
   body {
     background: #EEF2FF;
     font-family: sans-serif;
     font-size: 10pt;
   }
   .post {
-    margin: 2px 0 4px 0;
+    margin-left: 2px;
     background-color: #D6DAF0;
     border-right: 1px solid #b7c5d9;
     border-bottom: 1px solid #b7c5d9;
     transition-property: background-color;
     transition-duration: 3s;
+    flex-grow: 1;
   }
   .post.new {
     background-color: #feffbf;
   }
+  .post-container {
+    display: flex;
+    margin: 2px 0 4px 0;
+    width: 100%;
+  }
+  .thread-img {
+    display: block;
+    width: 100px;
+    margin-right: 10px;
+    flex-shrink: 0;
 
+  }
 </style>
 
 <div id=posts></div>
