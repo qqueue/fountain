@@ -68,6 +68,7 @@ document.add-event-listener \wheel !->
   console.log z-pos
   el.select-all \.thread
     .style \transform transform
+    .style \-webkit-transform transform
 
 transform = ({{x, y, z}: pos}) ->
   w = document.document-element.client-width
@@ -86,6 +87,7 @@ drag = d3.behavior.drag!
     @class-list.remove \drag
   .on \drag ({{z}: pos}: it) !->
     {x, y} = pos{x, y} = d3.event
+    @style['-webkit-transform'] = transform.call this, it
     @style.transform = transform.call this, it
 
 el = d3.select \#threads

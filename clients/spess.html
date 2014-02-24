@@ -30,6 +30,7 @@
   }
   s {
     text-decoration: none;
+    -webkit-transition-duration: 1s;
     transition-duration: 1s;
   }
   s:not(:hover) > *, s:not(:hover) {
@@ -49,6 +50,7 @@
     margin: 3px 0;
     overflow: hidden;
     max-height: 500px;
+    -webkit-transition: background-color 1s 3s, max-height 1s linear 0.5s;
     transition: background-color 1s 3s, max-height 1s linear 0.5s;
   }
   * {
@@ -64,6 +66,7 @@ user-select: none;
     max-height: 0px;
   }
   .post.dead {
+    -webkit-transition: max-height 1s linear;
     transition: max-height 1s linear;
     max-height: 0px;
   }
@@ -82,9 +85,11 @@ user-select: none;
   .thread {
     width: 400px;
     position: absolute;
+    -webkit-transition: transform 1s linear;
     transition: transform 1s linear;
   }
   .thread.drag {
+    -webkit-transition: transform 0s linear;
     transition: transform 0s linear;
   }
   html{
@@ -109,6 +114,6 @@ user-select: none;
 
 <div id=threads></div>
 
-<script src=node_modules/baconjs/dist/Bacon.js></script>
-<script src=d3.v3.js></script>
+<script src=http://cdnjs.cloudflare.com/ajax/libs/bacon.js/0.7.2/bacon.min.js></script>
+<script src=http://cdnjs.cloudflare.com/ajax/libs/d3/3.4.1/d3.min.js></script>
 <script src=spess.js></script>

@@ -1,9 +1,8 @@
 # fountain: drink deep from the spring of 4chan
 
-Fountain is a streaming API server for 4chan, similar to the Twitter
-firehose. Fountain replicates 4chan through the official 4chan API,
-then exposes the underlying events as Server-Sent-Events or
-whitespace-delimited JSON.
+Fountain is a streaming API server for 4chan, similar to the Twitter firehose.
+Fountain replicates 4chan through the official 4chan API, then exposes the
+underlying events as Server-Sent-Events or whitespace-delimited JSON.
 
 Fountain can be used to build interesting things, such as TODO
 
