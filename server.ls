@@ -150,19 +150,9 @@ y.board.on-value !({diff}: board) ->
 
 l.ready.push true
 
-require("net")
-  .createServer (socket) !->
-    repl = require('repl')
-    repl.start do
-      prompt: 'fountain> '
-      input: socket
-      output: socket
-      use-global: true
-      terminal: true
-    .on \exit !-> socket.end!
-  .listen 5000, "localhost"
-
 stringify = JSON~stringify
+
+console.log "listening on #{process.env.PORT || 3500}"
 
 require! express
 do express
