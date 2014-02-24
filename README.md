@@ -74,12 +74,12 @@ Then run with
 
     npm start
 
-By default, fountain will replicate and stream /a/. To change the board,
-set the `BOARD` env variable:
+By default, fountain will replicate and stream /a/ on port 3500. To change
+settings, set the appropriate environment variables:
 
-    BOARD="g" npm start
+    BOARD="g" PORT="3600" npm start
 
-fountain takes about ~3 minutes to replicate an entire board's threads. After
+Fountain takes about ~3 minutes to replicate an entire board's threads. After
 this "initial sync", fountain is able to keep in sync with 4chan with
 a median of 5 seconds latency between 4chan timestamp and emission of a
 `new-post` event.
@@ -112,7 +112,7 @@ like graphite, you can collect some interesting data.
 
 Fountain employs a similar polling strategy to `Asagi`, Foolz's board dumper.
 However, fountain achieves tighter sync latency by polling `catalog.json`, from
-which new posts can be found 99% of the time. 
+which new posts can be found 99% of the time.
 
 # Development
 

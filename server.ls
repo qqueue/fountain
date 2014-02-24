@@ -248,7 +248,7 @@ do express
 
     Bacon.interval 10_000ms .take-until Bacon.merge-all(close, err) .on-value !->
       res.write ":ping\n\n"
-  ..listen 3500
+  ..listen process.env.PORT || 3500
 
 !function save-state state, cb
   console.log "saving state to #SAVE_FILE..."
