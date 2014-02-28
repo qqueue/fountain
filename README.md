@@ -57,24 +57,41 @@ http://fountain.hakase.org/demo/
 
 View the raw json stream:
 
-    curl --compressed -v http://fountain.hakase.org/v1/a/json
+    curl --compressed -s http://fountain.hakase.org/v1/a/json
 
 Prettify with [jq][]:
 
-    curl --compressed -v http://fountain.hakase.org/v1/a/json |\
+    curl --compressed -s http://fountain.hakase.org/v1/a/json |\
     jq --unbuffered '.'
 
 Stalk moot on /g/:
 
-    curl --compressed -v http://fountain.hakase.org/v1/g/json |\
+    curl --compressed -s http://fountain.hakase.org/v1/g/json |\
     jq --unbuffered 'select(.name and (.name == "moot"))'
 
-Monitor lewdness on /a/:
+View images on /a/ as ANSI art (requires `img2txt` from [libcaca][], and
+zsh for its temporary file process substitution `=()` syntax):
 
-    curl --compressed -v http://fountain.hakase.org/v1/a/json |\
-    jq --unbuffered 'select(.com and (.com | contains("lewd")))'
+```sh
+#!/usr/bin/env zsh
+
+BOARD=a
+
+curl --compressed -s http://fountain.hakase.org/v1/$BOARD/json |\
+while read -r line; do
+  if [[ -n "$line" ]]; then
+    (jq -r 'select(.tim) | [.tim, (if .resto == 0 then .no else .resto end)]|@sh' <<< "$line") \
+    | while read tim tno; do
+      echo;
+      img2txt -W 80 -f utf8 -d fstein \
+        =(curl -s http://phosphene.hakase.org/$BOARD/thumbs/$tno/${tim}s.jpg);
+    done;
+  fi;
+done
+```
 
 [jq]: http://stedolan.github.io/jq/
+[libcaca]: http://caca.zoy.org/wiki/libcaca 
 
 # API
 
