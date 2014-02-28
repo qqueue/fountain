@@ -90,6 +90,10 @@ while read -r line; do
 done
 ```
 
+The ANSI art demo is also hosted on `fountain.hakase.org:4747` for /a/ and `4848` for /g/:
+
+    nc fountain.hakase.org 4747
+
 [jq]: http://stedolan.github.io/jq/
 [libcaca]: http://caca.zoy.org/wiki/libcaca 
 
