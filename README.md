@@ -4,8 +4,9 @@ Fountain is a streaming API server for 4chan, similar to the Twitter firehose.
 Fountain replicates 4chan through the official 4chan API, then exposes
 discrete events as Server-Sent-Events or whitespace-delimited JSON.
 
-Among other things, you can use fountain to [lurk every thread][drinker], or
-[stress test your browser's CSS 3D transforms][spess]. Other more interesting
+Among other things, you can use fountain to [lurk every thread][drinker],
+[stress test your browser's CSS 3D transforms][spess], or [make use of your
+advanced 256-color virtual terminal][ANSICHAN]. Other more interesting
 uses could be machine learning/sentiment analysis, as well as live-updating
 thread watchers in userscripts.
 
@@ -26,6 +27,7 @@ a stable release in the next few weeks.
 
 [drinker]: http://fountain.hakase.org/demo/client.html#g
 [spess]: http://fountain.hakase.org/demo/spess.html#a
+[ANSICHAN]: https://github.com/qqueue/ANSICHAN
 
 # Quickstart
 
