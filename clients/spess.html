@@ -30,7 +30,6 @@
   }
   s {
     text-decoration: none;
-    -webkit-transition-duration: 1s;
     transition-duration: 1s;
   }
   s:not(:hover) > *, s:not(:hover) {
@@ -50,7 +49,6 @@
     margin: 3px 0;
     overflow: hidden;
     max-height: 500px;
-    -webkit-transition: background-color 1s 3s, max-height 1s linear 0.5s;
     transition: background-color 1s 3s, max-height 1s linear 0.5s;
   }
   * {
@@ -66,7 +64,6 @@ user-select: none;
     max-height: 0px;
   }
   .post.dead {
-    -webkit-transition: max-height 1s linear;
     transition: max-height 1s linear;
     max-height: 0px;
   }
@@ -85,11 +82,11 @@ user-select: none;
   .thread {
     width: 400px;
     position: absolute;
-    -webkit-transition: transform 1s linear;
+    transition: -webkit-transform 1s linear;
     transition: transform 1s linear;
   }
   .thread.drag {
-    -webkit-transition: transform 0s linear;
+    transition: -webkit-transform 0s linear;
     transition: transform 0s linear;
   }
   html{

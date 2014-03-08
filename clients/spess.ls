@@ -67,8 +67,8 @@ document.add-event-listener \wheel !->
   z-pos += it.deltaY * 10
   console.log z-pos
   el.select-all \.thread
-    .style \transform transform
     .style \-webkit-transform transform
+    .style \transform transform
 
 transform = ({{x, y, z}: pos}) ->
   w = document.document-element.client-width
@@ -120,9 +120,9 @@ threads.on-value !(threads) ->
     ..enter!append \div
       ..attr \id (.no)
       ..attr \class \thread
-      ..style \transform ({{x, y}: pos}: it) ->
-        "translate3d(#{x}px, #{y}px, 800px)"
       ..style \-webkit-transform ({{x, y}: pos}: it) ->
+        "translate3d(#{x}px, #{y}px, 800px)"
+      ..style \transform ({{x, y}: pos}: it) ->
         "translate3d(#{x}px, #{y}px, 800px)"
       ..call drag
     ..style \z-index (.z-index)
@@ -186,6 +186,7 @@ threads.on-value !(threads) ->
           set-timeout (!~> @class-list.remove \new), 100ms
     ..each !->
       it.pos.z = -(latest - it.posts[*-1].time) / 90s * 800
+    ..style \-webkit-transform transform
     ..style \transform transform
 function humanized bytes
   if bytes < 1024
