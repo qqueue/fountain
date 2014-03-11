@@ -5,10 +5,11 @@ Fountain replicates 4chan through the official 4chan API, then exposes
 discrete events as Server-Sent-Events or whitespace-delimited JSON.
 
 Among other things, you can use fountain to [lurk every thread][drinker],
-[stress test your browser's CSS 3D transforms][spess], or [make use of your
-advanced 256-color virtual terminal][ANSICHAN]. Other more interesting
-uses could be machine learning/sentiment analysis, as well as live-updating
-thread watchers in userscripts.
+[stress test your browser's CSS 3D transforms][spess], [make use of your
+advanced 256-color virtual terminal][ANSICHAN], or you can just [dump the 
+stream into elasticsearch][es]. Other more interesting uses could be machine 
+learning/sentiment analysis, as well as live-updating thread watchers 
+in userscripts.
 
 If you're just interested in the API and not running fountain yourself, I host
 a publicly-accessible server at `fountain.hakase.org` that streams /a/ and /g/.
@@ -28,6 +29,7 @@ a stable release in the next few weeks.
 [drinker]: http://fountain.hakase.org/demo/client.html#g
 [spess]: http://fountain.hakase.org/demo/spess.html#a
 [ANSICHAN]: https://github.com/qqueue/ANSICHAN
+[es]: http://kibana.hakase.org/#/dashboard/elasticsearch/a
 
 # Quickstart
 
