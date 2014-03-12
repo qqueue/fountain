@@ -1,17 +1,14 @@
 require! {
   request
   EventSource: \eventsource
-  jsdom
+  ent
 }
 
-document = jsdom.jsdom(null, null, {fetchExternalResources: false})
-
 text-content = ->
-  div = document.create-element \div
-    ..innerHTML = (it || '')replace /<br>/g '\n'
-  return div.textContent
+  (it || '')
+    .replace /<br>/g '\n' .replace /<[^>]+>/g '' |> ent.decode
 
-es = new EventSource \http://localhost:3500/v1/a/stream
+es = new EventSource \http://fountain.hakase.org/v1/a/stream
   ..add-event-listener \error !->
       console.error "error" it
   ..add-event-listener \new-posts !->
@@ -25,7 +22,7 @@ es = new EventSource \http://localhost:3500/v1/a/stream
       ts = encodeURIComponent(new Date post.time * 1000 .toISOString!)
 
       request.put do
-        url: "http://localhost:9200/yotsuba-a/post/#{post.no}
+        url: "http://127.0.0.1:9200/yotsuba-a/post/#{post.no}
               ?parent=#{post.resto}&timestamp=#ts"
         json: post
         (err, res, body) ->
