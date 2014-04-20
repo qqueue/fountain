@@ -53,7 +53,7 @@ new EventSource "http://localhost:3500/v1/#BOARD/stream?catalog=true"
                 ..append-child <| with L \a
                   ..target = \_blank
                   ..href =
-                    "http://boards.4chan.org/#BOARD/res/
+                    "http://boards.4chan.org/#BOARD/thread/
                     #{if it.resto then "#that\#p" else ''}#{it.no}"
                   ..text-content =
                     " #{if it.resto then "#that\#p" else ''}#{it.no}"
@@ -78,7 +78,7 @@ new EventSource "http://localhost:3500/v1/#BOARD/stream?catalog=true"
               ..innerHTML = it.com
               for ..query-selector-all \.quotelink
                 ..target = \_blank
-                ..href = "https://boards.4chan.org/#BOARD/res/#{..get-attribute \href}"
+                ..href = "https://boards.4chan.org/#BOARD/thread/#{..get-attribute \href}"
           ..append-child <| with L \div
             ..class-list.add \footer
         ..append-child <| with L \div

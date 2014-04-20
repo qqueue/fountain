@@ -7,7 +7,7 @@ text-content = ->
     ..innerHTML = (it || '')replace /<br>/g '\n'
   return div.textContent
 
-init = JSON.parse fs.read-file-sync \a.json
+init = JSON.parse fs.read-file-sync \/tmp/org.hakase.fountain.a.json
 
 for n, thread of init.threads
   fs.write-file-sync do

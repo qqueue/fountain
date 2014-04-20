@@ -75,7 +75,7 @@ threads.on-value !(threads) ->
       ..classed \thread false
       ..transition!duration 3000ms .style \opacity 0 .remove!
     ..enter!append \a
-      ..attr \href -> "http://boards.4chan.org/#BOARD/res/#{it.no}"
+      ..attr \href -> "http://boards.4chan.org/#BOARD/thread/#{it.no}"
       ..attr \target \_blank
       ..attr \title ->
         "#{if it.posts.0.sub then that + "\n\n" else ''}

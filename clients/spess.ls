@@ -159,7 +159,7 @@ threads.on-value !(threads) ->
               ..attr \class \no
               ..attr \target \_blank
               ..attr \href ->
-                "http://boards.4chan.org/#BOARD/res/
+                "http://boards.4chan.org/#BOARD/thread/
                 #{if it.resto then "#that\#p" else ''}#{it.no}"
               ..text (.no)
         ..filter (.filename?)
@@ -179,7 +179,7 @@ threads.on-value !(threads) ->
           ..each !->
             for @query-selector-all \.quotelink
               ..target = \_blank
-              ..href = "https://boards.4chan.org/#BOARD/res/#{..get-attribute \href}"
+              ..href = "https://boards.4chan.org/#BOARD/thread/#{..get-attribute \href}"
         ..append \div
           ..attr \class \footer
         ..each !->

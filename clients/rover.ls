@@ -131,7 +131,7 @@ matching-posts.on-value !->
             ..attr \class \no
             ..attr \target \_blank
             ..attr \href ->
-              "http://boards.4chan.org/#BOARD/res/
+              "http://boards.4chan.org/#BOARD/thread/
               #{if it.resto then "#that\#p" else ''}#{it.no}"
             ..text (.no)
       ..filter (.filename?)
@@ -151,7 +151,7 @@ matching-posts.on-value !->
         ..each !->
           for @query-selector-all \.quotelink
             ..target = \_blank
-            ..href = "https://boards.4chan.org/#BOARD/res/#{..get-attribute \href}"
+            ..href = "https://boards.4chan.org/#BOARD/thread/#{..get-attribute \href}"
       ..append \div
         ..attr \class \footer
 

@@ -7,9 +7,9 @@ express!
 
     res.header 'expires' new Date(Date.now! + 60_000).toUTCString!
     request.get do
-      url: "http://thumbs.4chan.org/#board/thumb/#file"
+      url: "http://t.4cdn.org/#board/#file"
       headers:
-        \Referer : "http://boards.4chan.org/#board/res/#tno"
+        \Referer : "http://boards.4chan.org/#board/thread/#tno"
         \User-Agent : 'Phosphene/0.0.0'
     .pipe res
     .on \error !-> res.send 502
@@ -17,9 +17,9 @@ express!
     {board, file, no: tno} = req.params
     console.log "proxing full #file from thread #tno in #board"
     request.get do
-      url: "http://i.4cdn.org/#board/src/#file"
+      url: "http://i.4cdn.org/#board/#file"
       headers:
-        \Referer : "http://boards.4chan.org/#board/res/#tno"
+        \Referer : "http://boards.4chan.org/#board/thread/#tno"
         \User-Agent : 'Phosphene/0.0.0'
     .pipe res
     .on \error !-> res.send 502

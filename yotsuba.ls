@@ -577,7 +577,7 @@ next-request = (board-name, state) -->
   if thread? and Date.now! - state.last-catalog-poll < 10000ms
     type: \thread
     thread-no: thread.no
-    path: "/#board-name/res/#{thread.no}.json"
+    path: "/#board-name/thread/#{thread.no}.json"
   else
     type: \catalog
     path: "/#board-name/catalog.json"
