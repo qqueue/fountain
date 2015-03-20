@@ -1,9 +1,6 @@
-require! {
-  Bacon: \baconjs
-  _: \prelude-ls
-  colors
-  lynx
-}
+Bacon = require \baconjs
+_ = require \prelude-ls
+require! <[ colors lynx ]>
 
 #stats = new lynx \localhost 8125 scope: \fountain
 # XXX fake port to get tests to skip real data

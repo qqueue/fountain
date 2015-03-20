@@ -146,14 +146,6 @@ Fountain is an node.js-based HTTP server. Install the dependencies with
 
     npm install
 
-You'll have to install LiveScript globally (TODO fix this):
-
-    sudo npm install -g LiveScript
-
-Compile the LiveScript to javascript with:
-
-    lsc -cb *.ls clients/*.ls
-
 Then run with
 
     npm start

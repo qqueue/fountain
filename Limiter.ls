@@ -1,4 +1,4 @@
-require! Bacon: \baconjs
+Bacon = require \baconjs
 
 # unique error object to distinguish errors in @cooldown
 error = {}

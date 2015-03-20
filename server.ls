@@ -1,11 +1,11 @@
+Bacon = require \baconjs
+Yotsuba = require \./yotsuba
+_ = require \prelude-ls
 require! {
-  Bacon: \baconjs
   \./Limiter
   \./request
-  Yotsuba: \./yotsuba
   fs
   colors
-  _: \prelude-ls
   #req: \request
   lynx
 }
