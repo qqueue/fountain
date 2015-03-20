@@ -8,7 +8,6 @@ require! {
   _: \prelude-ls
   #req: \request
   lynx
-  memwatch
 }
 
 board = process.env.BOARD || 'a'
@@ -17,36 +16,11 @@ const SAVE_FILE = "/tmp/org.hakase.fountain.#board.json"
 
 stats = new lynx \localhost 8125 scope: \fountain
 
-memwatch.on \leak !->
-  stats.increment 'leak'
-  console.log it
-
 # inc_gc/full_gc/compactions are all counting from 0
 # which is not as useful as a rate, so keep track of last seen
 last-inc-gc = 0
 last-full-gc = 0
 last-heap-compactions = 0
-
-memwatch.on \stats !->
-  stats.count "mem.inc_gc" diff if (diff = it.inc_gc - last-inc-gc) > 0
-  last-inc-gc := it.inc_gc
-
-  stats.count "mem.full_gc" diff if (diff = it.full_gc - last-full-gc) > 0
-  last-full-gc := it.full_gc
-
-  if (diff = it.heap_compactions - last-heap-compactions) > 0
-    stats.count "mem.heap_compactions" diff
-  last-heap-compactions := it.heap_compactions
-
-  # still not really sure what usage trend is, gauge anyway
-  stats.gauge "mem.usage_trend" it.usage_trend
-
-  stats.gauge "mem.current_base" it.current_base
-  stats.gauge "mem.min" it.min
-  stats.gauge "mem.max" it.max
-
-  for k, v of process.memory-usage! # rss, heapTotal, heapUsed
-    stats.gauge "mem.#k" v
 
 text-content = ->
   return '' if not it?
