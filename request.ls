@@ -1,5 +1,5 @@
+Bacon = require \baconjs
 require! {
-  Bacon: \baconjs
   http
   zlib
   lynx
